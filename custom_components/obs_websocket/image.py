@@ -9,7 +9,7 @@ from random import SystemRandom
 
 from homeassistant.components.image import ImageEntity, ImageEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
 
@@ -36,7 +36,8 @@ async def async_setup_entry(
 class OBSScenePreview(OBSEntity, ImageEntity):
     """OBS WebSocket scene preview image.
 
-    Overrides image() to return screenshot bytes from OBS.
+    Polls for screenshots AND listens to coordinator updates
+    (scene changes trigger immediate refresh).
     """
 
     _attr_should_poll = True
@@ -61,12 +62,13 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         )
         super().__init__(coordinator, entry_id, description)
 
-        # Now safe to set remaining ImageEntity attributes
+        self._hass = hass
         self._client = get_async_client(hass, verify_ssl=False)
         self._attr_content_type = "image/jpeg"
         self._attr_image_last_updated: datetime | None = None
         self._last_fetch: datetime | None = None
         self._cached_bytes: bytes | None = None
+        self._fetch_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -75,17 +77,16 @@ class OBSScenePreview(OBSEntity, ImageEntity):
             and self.coordinator.scene is not None
         )
 
-    def image(self) -> bytes | None:
-        """Return screenshot bytes.
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator update — trigger image refresh on scene change."""
+        # Schedule async image fetch on the event loop
+        self.hass.async_create_task(self._async_refresh_image())
+        # Call parent to update state
+        self.async_write_ha_state()
 
-        Called by HA's async_image() in an executor thread.
-        Returns cached bytes if recent enough, otherwise None
-        (async_update fetches new bytes asynchronously).
-        """
-        return self._cached_bytes
-
-    async def async_update(self) -> None:
-        """Fetch a new preview screenshot periodically."""
+    async def _async_refresh_image(self) -> None:
+        """Fetch a new screenshot, with throttling and lock."""
         scene = self.coordinator.scene
         if not scene:
             return
@@ -94,24 +95,41 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         if self._last_fetch and (now - self._last_fetch) < timedelta(seconds=PREVIEW_INTERVAL):
             return
 
-        _LOGGER.debug("Preview: requesting screenshot for scene '%s'", scene)
-        try:
-            image_data = await asyncio.wait_for(
-                self.coordinator.get_scene_preview(),
-                timeout=15,
-            )
-            if image_data:
-                self._cached_bytes = image_data
-                self._attr_image_last_updated = now
-                self._last_fetch = now
-                self.async_write_ha_state()
-                _LOGGER.debug("Preview: got %d bytes for scene '%s'", len(image_data), scene)
-            else:
-                _LOGGER.warning("Preview: get_scene_preview returned None for scene '%s'", scene)
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Preview: timed out getting screenshot for scene '%s'", scene)
-        except Exception as err:
-            _LOGGER.warning("Preview: error getting screenshot for scene '%s': %s", scene, err)
+        async with self._fetch_lock:
+            # Double-check after acquiring lock
+            now = datetime.now()
+            if self._last_fetch and (now - self._last_fetch) < timedelta(seconds=PREVIEW_INTERVAL):
+                return
+
+            _LOGGER.debug("Preview: requesting screenshot for scene '%s'", scene)
+            try:
+                image_data = await asyncio.wait_for(
+                    self.coordinator.get_scene_preview(),
+                    timeout=15,
+                )
+                if image_data:
+                    self._cached_bytes = image_data
+                    self._attr_image_last_updated = datetime.now()
+                    self._last_fetch = datetime.now()
+                    self.async_write_ha_state()
+                    _LOGGER.debug("Preview: got %d bytes for scene '%s'", len(image_data), scene)
+                else:
+                    _LOGGER.warning("Preview: get_scene_preview returned None for scene '%s'", scene)
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Preview: timed out getting screenshot for scene '%s'", scene)
+            except Exception as err:
+                _LOGGER.warning("Preview: error getting screenshot for scene '%s': %s", scene, err)
+
+    def image(self) -> bytes | None:
+        """Return screenshot bytes.
+
+        Called by HA's async_image() in an executor thread.
+        """
+        return self._cached_bytes
+
+    async def async_update(self) -> None:
+        """Fetch a new preview screenshot periodically."""
+        await self._async_refresh_image()
 
     @property
     def extra_state_attributes(self) -> dict | None:
