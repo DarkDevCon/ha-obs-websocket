@@ -13,6 +13,21 @@ from .const import DOMAIN, EVENT_OBS_EVENT
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _b64decode_safe(b64: str) -> bytes:
+    """Base64 decode with padding repair.
+
+    OBS sometimes sends base64 strings without correct padding
+    (missing '=' characters), causing binascii.Error: Incorrect padding.
+    """
+    # Strip whitespace/newlines that some OBS versions add
+    b64 = b64.strip().replace("\n", "").replace("\r", "")
+    # Fix padding: base64 strings must be multiple of 4
+    missing = len(b64) % 4
+    if missing:
+        b64 += "=" * (4 - missing)
+    return base64.b64decode(b64)
+
 # Suppress obsws_python's verbose exception logging for 604 (not available) errors.
 # The library logs every OBSSDKRequestError at ERROR level with traceback before
 # raising, even for expected conditions like "VirtualCam not available" or
@@ -578,10 +593,11 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             # as_dataclass converts top-level keys to snake_case
             # The response has 'imageData' -> 'image_data'
             if hasattr(screenshot, "image_data"):
-                _LOGGER.debug("get_scene_preview: got image (%d bytes)", len(screenshot.image_data))
-                return base64.b64decode(screenshot.image_data)
+                b64_data = screenshot.image_data
+                _LOGGER.debug("get_scene_preview: got image (%d chars)", len(b64_data))
+                return _b64decode_safe(b64_data)
             elif hasattr(screenshot, "img"):
-                return base64.b64decode(screenshot.img)
+                return _b64decode_safe(screenshot.img)
             else:
                 _LOGGER.warning("get_scene_preview: unexpected response: %s", type(screenshot))
         except Exception as err:
