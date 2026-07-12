@@ -76,7 +76,7 @@
         "name": "Scene Count"
       }
     },
-    "camera": {
+    "image": {
       "scene_preview": {
         "name": "Scene Preview"
       }

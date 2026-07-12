@@ -77,39 +77,35 @@ async def async_setup_entry(
     for description in SWITCHES:
         entities.append(OBSSwitch(coordinator, entry.entry_id, description))
 
-    # Dynamic visibility switches per scene item (disabled by default via entity_category)
-    vis_switches: list[OBSSceneItemVisibilitySwitch] = []
-    for scene_name, sources in coordinator.scene_items.items():
-        for source_name in sources:
-            vis_switches.append(
-                OBSSceneItemVisibilitySwitch(coordinator, entry.entry_id, scene_name, source_name)
-            )
-    entities.extend(vis_switches)
-
     async_add_entities(entities)
 
-    # Listen for new scene items
+    # Dynamic visibility switches per scene item (disabled by default via entity_category)
+    _known_vis_keys: set[tuple[str, str]] = set()
+
     @callback
-    def _async_update_entities(entry_id: str) -> None:
+    def _async_add_vis_switches(entry_id: str) -> None:
         if entry_id != entry.entry_id:
             return
 
-        existing_vis_keys = {(sw._scene_name, sw._source_name) for sw in vis_switches}
         new_entities = []
         for scene_name, sources in coordinator.scene_items.items():
             for source_name in sources:
-                if (scene_name, source_name) not in existing_vis_keys:
-                    new_sw = OBSSceneItemVisibilitySwitch(
-                        coordinator, entry.entry_id, scene_name, source_name
+                key = (scene_name, source_name)
+                if key not in _known_vis_keys:
+                    _known_vis_keys.add(key)
+                    new_entities.append(
+                        OBSSceneItemVisibilitySwitch(
+                            coordinator, entry.entry_id, scene_name, source_name
+                        )
                     )
-                    vis_switches.append(new_sw)
-                    new_entities.append(new_sw)
-
         if new_entities:
             async_add_entities(new_entities)
 
+    # Initial creation — scene_items might be empty on first call
+    _async_add_vis_switches(entry.entry_id)
+
     entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_update_entities)
+        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_add_vis_switches)
     )
 
 

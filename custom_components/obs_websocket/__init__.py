@@ -17,7 +17,7 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
     Platform.SELECT,
     Platform.NUMBER,
-    Platform.CAMERA,
+    Platform.IMAGE,
 ]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:

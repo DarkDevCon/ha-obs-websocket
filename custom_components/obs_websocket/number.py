@@ -6,10 +6,9 @@ import logging
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityDescription
+from homeassistant.helpers.entity import EntityDescription, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 from .coordinator import OBSWebSocketCoordinator, SIGNAL_OBS_UPDATE
@@ -28,43 +27,45 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up OBS WebSocket number entities (volume sliders)."""
+    """Set up OBS WebSocket number entities (volume sliders).
+
+    Volume sliders are created with entity_category=config so they are
+    disabled by default in HA. Users can enable them in the entity registry.
+    """
     coordinator: OBSWebSocketCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Initial creation
-    entities: list[OBSVolumeSlider] = []
-    for source_name in coordinator.audio_inputs:
-        entities.append(OBSVolumeSlider(coordinator, entry.entry_id, source_name))
+    _known_sources: set[str] = set()
 
-    async_add_entities(entities)
-
-    # Listen for new audio inputs being added
     @callback
-    def _async_update_entities(entry_id: str) -> None:
+    def _async_add_new_entities(entry_id: str) -> None:
         if entry_id != entry.entry_id:
             return
-        # Check for new sources not yet tracked
-        existing_names = {
-            entity._source_name
-            for entity in entities
-            if isinstance(entity, OBSVolumeSlider)
-        }
+
         new_entities = []
         for source_name in coordinator.audio_inputs:
-            if source_name not in existing_names:
-                new_entity = OBSVolumeSlider(coordinator, entry.entry_id, source_name)
-                entities.append(new_entity)
-                new_entities.append(new_entity)
+            if source_name not in _known_sources:
+                _known_sources.add(source_name)
+                new_entities.append(
+                    OBSVolumeSlider(coordinator, entry.entry_id, source_name)
+                )
         if new_entities:
             async_add_entities(new_entities)
 
+    # Initial creation — audio_inputs might be empty on first call,
+    # the dispatcher listener will add them after _refresh_state runs.
+    _async_add_new_entities(entry.entry_id)
+
     entry.async_on_unload(
-        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_update_entities)
+        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_add_new_entities)
     )
 
 
 class OBSVolumeSlider(OBSEntity, NumberEntity):
-    """OBS WebSocket audio volume slider."""
+    """OBS WebSocket audio volume slider.
+
+    Disabled by default via entity_category=config.
+    Enable in HA entity registry to use.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
 
