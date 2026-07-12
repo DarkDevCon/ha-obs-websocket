@@ -7,10 +7,9 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
-from .coordinator import OBSWebSocketCoordinator, SIGNAL_OBS_UPDATE
+from .coordinator import OBSWebSocketCoordinator
 from .entity import OBSEntity
 
 _LOGGER = logging.getLogger(__name__)

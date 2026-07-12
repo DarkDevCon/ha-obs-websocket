@@ -7,7 +7,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN, DEFAULT_PORT
 
@@ -22,18 +22,23 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
-async def _test_connection(host: str, port: int, password: str | None) -> bool:
+async def _test_connection(
+    hass: HomeAssistant, host: str, port: int, password: str | None
+) -> bool:
     """Test connection to OBS WebSocket."""
     try:
         import obsws_python as obs
 
-        client = obs.ReqClient(
-            host=host,
-            port=port,
-            password=password or "",
-            timeout=5,
+        # ReqClient constructor does blocking I/O — run in executor
+        client = await hass.async_add_executor_job(
+            obs.ReqClient,
+            host,
+            port,
+            password or "",
+            5,  # timeout
         )
-        client.get_version()
+        await hass.async_add_executor_job(client.get_version)
+        await hass.async_add_executor_job(client.disconnect)
         return True
     except Exception as err:
         _LOGGER.error("OBS WebSocket connection test failed: %s", err)
@@ -60,7 +65,7 @@ class OBSWebSocketConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(f"{host}:{port}")
             self._abort_if_unique_id_configured()
 
-            connected = await _test_connection(host, port, password)
+            connected = await _test_connection(self.hass, host, port, password)
             if connected:
                 return self.async_create_entry(
                     title=f"OBS {host}:{port}",
@@ -94,16 +99,44 @@ class OBSWebSocketOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Manage options."""
         if user_input is not None:
+            # Test the new password if provided
+            new_password = user_input.get(CONF_PASSWORD)
+            if new_password:
+                host = self._config_entry.data[CONF_HOST]
+                port = self._config_entry.data.get(CONF_PORT, DEFAULT_PORT)
+                connected = await _test_connection(self.hass, host, port, new_password)
+                if not connected:
+                    return self.async_show_form(
+                        step_id="init",
+                        data_schema=self._build_options_schema(),
+                        errors={"base": "cannot_connect"},
+                    )
+
+            # Update the config entry data with the new password
+            new_data = dict(self._config_entry.data)
+            if new_password is not None:
+                new_data[CONF_PASSWORD] = new_password
+            self.hass.config_entries.async_update_entry(
+                self._config_entry, data=new_data
+            )
+
+            # Trigger a reload of the config entry
+            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
+
             return self.async_create_entry(data=user_input)
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_PASSWORD,
-                        default=self._config_entry.data.get(CONF_PASSWORD, ""),
-                    ): str,
-                }
-            ),
+            data_schema=self._build_options_schema(),
+        )
+
+    def _build_options_schema(self) -> vol.Schema:
+        """Build the options schema."""
+        return vol.Schema(
+            {
+                vol.Optional(
+                    CONF_PASSWORD,
+                    default=self._config_entry.data.get(CONF_PASSWORD, ""),
+                ): str,
+            }
         )

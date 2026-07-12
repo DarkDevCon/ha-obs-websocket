@@ -81,6 +81,8 @@ class OBSButton(OBSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Press the button."""
-        fn = getattr(self.coordinator, self._description.action_fn)
-        if fn:
+        fn = getattr(self.coordinator, self._description.action_fn, None)
+        if fn and callable(fn):
             await fn()
+        else:
+            _LOGGER.warning("Action %s not found on coordinator", self._description.action_fn)

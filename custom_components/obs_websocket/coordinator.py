@@ -1,6 +1,7 @@
 """OBS WebSocket Coordinator — manages connection and state."""
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 
@@ -92,26 +93,42 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         """Connect to OBS WebSocket."""
         import obsws_python as obs
 
-        self._client = obs.ReqClient(
-            host=self._host,
-            port=self._port,
-            password=self._password or "",
-            timeout=10,
+        # ReqClient and EventClient constructors do blocking I/O (WebSocket connect + auth)
+        self._client = await self.hass.async_add_executor_job(
+            obs.ReqClient,
+            self._host,
+            self._port,
+            self._password or "",
+            10,  # timeout
         )
 
         # Get initial state
         await self._refresh_state()
 
-        # Subscribe to events via EventClient
-        self._event_client = obs.EventClient(
-            host=self._host,
-            port=self._port,
-            password=self._password or "",
-            timeout=10,
+        # EventClient auto-connects and starts listening in __init__
+        self._event_client = await self.hass.async_add_executor_job(
+            obs.EventClient,
+            self._host,
+            self._port,
+            self._password or "",
+            10,  # timeout
         )
 
-        self._event_client.callback.register(self._on_obs_event)
-        self._event_client.connect()
+        self._event_client.callback.register(
+            [
+                self.on_current_program_scene_changed,
+                self.on_stream_state_changed,
+                self.on_record_state_changed,
+                self.on_replay_buffer_state_changed,
+                self.on_virtualcam_state_changed,
+                self.on_scene_list_changed,
+                self.on_scene_item_enable_state_changed,
+                self.on_input_mute_state_changed,
+                self.on_input_volume_changed,
+                self.on_input_created,
+                self.on_input_removed,
+            ]
+        )
 
         _LOGGER.info("Connected to OBS WebSocket at %s:%s", self._host, self._port)
 
@@ -119,12 +136,16 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         """Disconnect from OBS WebSocket."""
         if self._event_client:
             try:
-                self._event_client.disconnect()
+                await self.hass.async_add_executor_job(self._event_client.disconnect)
             except Exception:
                 pass
             self._event_client = None
 
         if self._client:
+            try:
+                await self.hass.async_add_executor_job(self._client.disconnect)
+            except Exception:
+                pass
             self._client = None
 
         _LOGGER.info("Disconnected from OBS WebSocket")
@@ -139,6 +160,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             scene = await self.hass.async_add_executor_job(
                 self._client.get_current_program_scene
             )
+            # as_dataclass converts top-level keys to snake_case attributes
             self._scene = scene.scene_name if scene else None
 
             # Streaming / Recording / Replay / VirtualCam status
@@ -166,7 +188,11 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             scenes_resp = await self.hass.async_add_executor_job(
                 self._client.get_scene_list
             )
-            self._scenes = [s.scene_name for s in scenes_resp.scenes] if scenes_resp else []
+            if scenes_resp and scenes_resp.scenes:
+                # scenes is a list of raw dicts with camelCase keys
+                self._scenes = [s["sceneName"] for s in scenes_resp.scenes]
+            else:
+                self._scenes = []
 
             # Audio inputs
             await self._refresh_audio_inputs()
@@ -185,11 +211,12 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             return
         try:
             inputs = await self.hass.async_add_executor_job(
-                self._client.get_inputs
+                self._client.get_input_list
             )
             new_inputs: dict[str, dict] = {}
+            # inputs.inputs is a list of raw dicts with camelCase keys
             for inp in (inputs.inputs if inputs else []):
-                name = inp.input_name
+                name = inp["inputName"]
                 try:
                     mute_resp = await self.hass.async_add_executor_job(
                         self._client.get_input_mute, name
@@ -221,9 +248,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                         self._client.get_scene_item_list, scene_name
                     )
                     scene_vis: dict[str, bool] = {}
+                    # scene_items is a list of raw dicts with camelCase keys
                     for item in (items.scene_items if items else []):
-                        source_name = item.get("source_name", "")
-                        visible = item.get("scene_item_visible", True)
+                        source_name = item.get("sourceName", "")
+                        visible = item.get("sceneItemVisible", True)
                         if source_name:
                             scene_vis[source_name] = visible
                     new_scene_items[scene_name] = scene_vis
@@ -240,78 +268,113 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             scenes_resp = await self.hass.async_add_executor_job(
                 self._client.get_scene_list
             )
-            self._scenes = [s.scene_name for s in scenes_resp.scenes] if scenes_resp else []
+            if scenes_resp and scenes_resp.scenes:
+                self._scenes = [s["sceneName"] for s in scenes_resp.scenes]
+            else:
+                self._scenes = []
         except Exception:
             pass
         self._notify_update()
 
-    def _on_obs_event(self, event) -> None:
-        """Handle OBS WebSocket events."""
-        event_type = event.event_type
-        data = event.data if hasattr(event, "data") else {}
+    # === Event Callbacks ===
+    # obsws-python Callback.trigger() calls functions named on_{snake_case(event)}.
+    # Each callback receives a dataclass with snake_case attributes derived from the event data.
 
-        _LOGGER.debug("OBS event: %s — %s", event_type, data)
+    def on_current_program_scene_changed(self, data) -> None:
+        """Handle CurrentProgramSceneChanged event."""
+        self._scene = data.scene_name
+        self._fire_event("CurrentProgramSceneChanged", data)
+        self._notify_update()
 
-        if event_type == "CurrentProgramSceneChanged":
-            self._scene = data.get("scene_name", self._scene)
+    def on_stream_state_changed(self, data) -> None:
+        """Handle StreamStateChanged event."""
+        self._streaming = data.output_active
+        self._fire_event("StreamStateChanged", data)
+        self._notify_update()
 
-        elif event_type == "StreamStateChanged":
-            self._streaming = data.get("output_active", self._streaming)
+    def on_record_state_changed(self, data) -> None:
+        """Handle RecordStateChanged event."""
+        self._recording = data.output_active
+        self._fire_event("RecordStateChanged", data)
+        self._notify_update()
 
-        elif event_type == "RecordStateChanged":
-            self._recording = data.get("output_active", self._recording)
+    def on_replay_buffer_state_changed(self, data) -> None:
+        """Handle ReplayBufferStateChanged event."""
+        self._replay_buffer = data.output_active
+        self._fire_event("ReplayBufferStateChanged", data)
+        self._notify_update()
 
-        elif event_type == "ReplayBufferStateChanged":
-            self._replay_buffer = data.get("output_active", self._replay_buffer)
+    def on_virtualcam_state_changed(self, data) -> None:
+        """Handle VirtualcamStateChanged event."""
+        self._virtualcam = data.output_active
+        self._fire_event("VirtualcamStateChanged", data)
+        self._notify_update()
 
-        elif event_type == "VirtualcamStateChanged":
-            self._virtualcam = data.get("output_active", self._virtualcam)
+    def on_scene_list_changed(self, data) -> None:
+        """Handle SceneListChanged event — trigger async refresh."""
+        self.hass.async_create_task(self._refresh_scenes())
+        self.hass.async_create_task(self._refresh_scene_items())
+        self._fire_event("SceneListChanged", data)
 
-        elif event_type == "SceneListChanged":
-            self.hass.async_create_task(self._refresh_scenes())
-            self.hass.async_create_task(self._refresh_scene_items())
+    def on_scene_item_enable_state_changed(self, data) -> None:
+        """Handle SceneItemEnableStateChanged event — trigger async refresh."""
+        self.hass.async_create_task(self._refresh_scene_items())
+        self._fire_event("SceneItemEnableStateChanged", data)
 
-        elif event_type == "SceneItemEnableStateChanged":
-            scene_name = data.get("scene_name")
-            item_id = data.get("scene_item_id")
-            visible = data.get("scene_item_enabled", True)
-            # Try to find source name by item_id in our cached data
-            if scene_name and scene_name in self._scene_items:
-                for src_name, vis in self._scene_items[scene_name].items():
-                    # We don't have item_id mapping, so just trigger a refresh
-                    break
-            self.hass.async_create_task(self._refresh_scene_items())
+    def on_input_mute_state_changed(self, data) -> None:
+        """Handle InputMuteStateChanged event."""
+        input_name = data.input_name
+        muted = data.input_muted
+        if input_name and input_name in self._audio_inputs:
+            self._audio_inputs[input_name]["muted"] = muted
+        self._fire_event("InputMuteStateChanged", data)
+        self._notify_update()
 
-        elif event_type == "InputMuteStateChanged":
-            input_name = data.get("input_name")
-            muted = data.get("input_muted", False)
-            if input_name and input_name in self._audio_inputs:
-                self._audio_inputs[input_name]["muted"] = muted
+    def on_input_volume_changed(self, data) -> None:
+        """Handle InputVolumeChanged event."""
+        input_name = data.input_name
+        vol_db = data.input_volume_db
+        if input_name:
+            if input_name not in self._audio_inputs:
+                self._audio_inputs[input_name] = {"muted": False, "volume_db": vol_db}
+            else:
+                self._audio_inputs[input_name]["volume_db"] = vol_db
+        self._fire_event("InputVolumeChanged", data)
+        self._notify_update()
 
-        elif event_type == "InputVolumeChanged":
-            input_name = data.get("input_name")
-            vol_db = data.get("input_volume_db", 0.0)
-            if input_name:
-                if input_name not in self._audio_inputs:
-                    self._audio_inputs[input_name] = {"muted": False, "volume_db": vol_db}
-                else:
-                    self._audio_inputs[input_name]["volume_db"] = vol_db
+    def on_input_created(self, data) -> None:
+        """Handle InputCreated event — refresh audio inputs."""
+        self.hass.async_create_task(self._refresh_audio_inputs())
+        self._fire_event("InputCreated", data)
 
-        elif event_type == "InputCreated":
-            self.hass.async_create_task(self._refresh_audio_inputs())
+    def on_input_removed(self, data) -> None:
+        """Handle InputRemoved event."""
+        input_name = data.input_name
+        if input_name and input_name in self._audio_inputs:
+            del self._audio_inputs[input_name]
+        self._fire_event("InputRemoved", data)
+        self._notify_update()
 
-        elif event_type == "InputRemoved":
-            input_name = data.get("input_name")
-            if input_name and input_name in self._audio_inputs:
-                del self._audio_inputs[input_name]
+    def _fire_event(self, event_type: str, data) -> None:
+        """Fire an HA event with the OBS event data."""
+        # as_dataclass returns a class (type) with class-level attributes
+        # Convert to dict for the HA event
+        try:
+            if hasattr(data, "__dict__"):
+                event_data = {
+                    k: v
+                    for k, v in data.__dict__.items()
+                    if not k.startswith("_") and not callable(v)
+                }
+            else:
+                event_data = {}
+        except Exception:
+            event_data = {}
 
-        # Fire HA event
         self.hass.bus.async_fire(
             EVENT_OBS_EVENT,
-            {"event_type": event_type, "data": data, "entry_id": self._entry_id},
+            {"event_type": event_type, "data": event_data, "entry_id": self._entry_id},
         )
-
-        self._notify_update()
 
     @callback
     def _notify_update(self) -> None:
@@ -366,7 +429,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     async def set_input_volume(self, source: str, volume_db: float) -> None:
         await self.hass.async_add_executor_job(
-            self._client.set_input_volume, source, vol_db=volume_db
+            self._client.set_input_volume, source, None, volume_db
         )
 
     async def set_scene_item_enabled(self, scene_name: str, source_name: str, enabled: bool) -> None:
@@ -377,8 +440,8 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         )
         item_id = None
         for item in (items.scene_items if items else []):
-            if item.get("source_name") == source_name:
-                item_id = item.get("scene_item_id")
+            if item.get("sourceName") == source_name:
+                item_id = item.get("sceneItemId")
                 break
         if item_id is not None:
             await self.hass.async_add_executor_job(
@@ -401,18 +464,21 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             if scene_name is None:
                 return None
             # OBS WebSocket v5: GetSourceScreenshot
+            # Signature: get_source_screenshot(name, img_format, width, height, quality)
             screenshot = await self.hass.async_add_executor_job(
                 self._client.get_source_screenshot,
                 scene_name,
                 "png",
+                0,  # width: 0 = source resolution
+                0,  # height: 0 = source resolution
+                -1,  # quality: -1 = default
             )
-            # The response has a 'img' field with base64-encoded PNG
-            if hasattr(screenshot, 'img'):
-                import base64
-                return base64.b64decode(screenshot.img)
-            elif hasattr(screenshot, 'image_data'):
-                import base64
+            # as_dataclass converts top-level keys to snake_case
+            # The response has 'imageData' -> 'image_data' and 'imageWidth' -> 'image_width'
+            if hasattr(screenshot, "image_data"):
                 return base64.b64decode(screenshot.image_data)
+            elif hasattr(screenshot, "img"):
+                return base64.b64decode(screenshot.img)
         except Exception as err:
             _LOGGER.error("Error getting scene preview: %s", err)
         return None

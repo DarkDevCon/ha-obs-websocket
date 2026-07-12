@@ -147,15 +147,19 @@ class OBSSwitch(OBSEntity, SwitchEntity):
 
     async def async_turn_on(self) -> None:
         """Turn the switch on."""
-        fn = getattr(self.coordinator, self._description.turn_on_fn)
-        if fn:
+        fn = getattr(self.coordinator, self._description.turn_on_fn, None)
+        if fn and callable(fn):
             await fn()
+        else:
+            _LOGGER.warning("Action %s not found on coordinator", self._description.turn_on_fn)
 
     async def async_turn_off(self) -> None:
         """Turn the switch off."""
-        fn = getattr(self.coordinator, self._description.turn_off_fn)
-        if fn:
+        fn = getattr(self.coordinator, self._description.turn_off_fn, None)
+        if fn and callable(fn):
             await fn()
+        else:
+            _LOGGER.warning("Action %s not found on coordinator", self._description.turn_off_fn)
 
 
 class OBSMuteSwitch(OBSEntity, SwitchEntity):
