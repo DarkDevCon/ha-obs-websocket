@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 from datetime import datetime, timedelta
+from random import SystemRandom
 
 from homeassistant.components.image import ImageEntity, ImageEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.httpx_client import get_async_client
 
 from .const import DOMAIN
 from .coordinator import OBSWebSocketCoordinator
@@ -44,21 +47,21 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         entry_id: str,
         hass: HomeAssistant,
     ) -> None:
+        # MUST set access_tokens BEFORE super().__init__ because
+        # CoordinatorEntity.__init__ / HA internals may trigger
+        # async_write_ha_state() during init, which reads state_attributes,
+        # which reads access_tokens.
+        self.access_tokens: collections.deque = collections.deque([], 2)
+        self.access_tokens.append(hex(SystemRandom().getrandbits(256))[2:])
+
         description = ImageEntityDescription(
             key="scene_preview",
             translation_key="scene_preview",
             icon="mdi:eye",
         )
-        # OBSEntity doesn't call ImageEntity.__init__, so we need to
-        # manually init the ImageEntity-specific attributes
         super().__init__(coordinator, entry_id, description)
-        # ImageEntity.__init__ sets up access_tokens and http client
-        # We need to replicate that here
-        import collections
-        from homeassistant.helpers.httpx_client import get_async_client
-        from random import SystemRandom
-        self.access_tokens: collections.deque = collections.deque([], 2)
-        self.access_tokens.append(hex(SystemRandom().getrandbits(256))[2:])
+
+        # Now safe to set remaining ImageEntity attributes
         self._client = get_async_client(hass, verify_ssl=False)
         self._attr_content_type = "image/jpeg"
         self._attr_image_last_updated: datetime | None = None
@@ -91,7 +94,7 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         if self._last_fetch and (now - self._last_fetch) < timedelta(seconds=PREVIEW_INTERVAL):
             return
 
-        _LOGGER.info("Preview: requesting screenshot for scene '%s'", scene)
+        _LOGGER.debug("Preview: requesting screenshot for scene '%s'", scene)
         try:
             image_data = await asyncio.wait_for(
                 self.coordinator.get_scene_preview(),
@@ -102,7 +105,7 @@ class OBSScenePreview(OBSEntity, ImageEntity):
                 self._attr_image_last_updated = now
                 self._last_fetch = now
                 self.async_write_ha_state()
-                _LOGGER.info("Preview: got %d bytes for scene '%s'", len(image_data), scene)
+                _LOGGER.debug("Preview: got %d bytes for scene '%s'", len(image_data), scene)
             else:
                 _LOGGER.warning("Preview: get_scene_preview returned None for scene '%s'", scene)
         except asyncio.TimeoutError:
