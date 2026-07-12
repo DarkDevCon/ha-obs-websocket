@@ -229,42 +229,69 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._notify_update()
 
     async def _refresh_audio_inputs(self) -> None:
-        """Refresh audio input list and their mute/volume state."""
+        """Refresh audio input list and their mute/volume state.
+
+        Combines regular inputs (GetInputList) and special inputs
+        (GetSpecialInputs — Desktop Audio, Mic/Aux, etc.) because
+        OBS treats them as different categories.
+        """
         if not self._client:
             return
+        new_inputs: dict[str, dict] = {}
+
+        # 1) Regular inputs
         try:
             inputs = await self.hass.async_add_executor_job(
                 self._client.get_input_list
             )
-            # inputs.inputs is a list of raw dicts with camelCase keys
             raw_inputs = inputs.inputs if inputs and hasattr(inputs, "inputs") else []
             if not raw_inputs and inputs:
-                # Fallback: maybe it's a dict-like with "inputs" key
                 raw_inputs = inputs.get("inputs", []) if hasattr(inputs, "get") else []
-            new_inputs: dict[str, dict] = {}
             for inp in raw_inputs:
                 name = inp.get("inputName") if isinstance(inp, dict) else None
                 if not name:
                     continue
-                try:
-                    mute_resp = await self.hass.async_add_executor_job(
-                        self._client.get_input_mute, name
-                    )
-                    muted = mute_resp.input_muted if mute_resp else False
-                except Exception:
-                    muted = False
-                try:
-                    vol_resp = await self.hass.async_add_executor_job(
-                        self._client.get_input_volume, name
-                    )
-                    vol_db = vol_resp.input_volume_db if vol_resp else 0.0
-                except Exception:
-                    vol_db = 0.0
-                new_inputs[name] = {"muted": muted, "volume_db": vol_db}
-            self._audio_inputs = new_inputs
-            _LOGGER.debug("Refreshed audio inputs: %s", list(new_inputs.keys()))
+                await self._fetch_audio_state(name, new_inputs)
         except Exception as err:
-            _LOGGER.error("Could not refresh audio inputs: %s", err)
+            _LOGGER.error("Could not refresh regular inputs: %s", err)
+
+        # 2) Special inputs (Desktop Audio, Mic/Aux, etc.)
+        try:
+            special = await self.hass.async_add_executor_job(
+                self._client.get_special_inputs
+            )
+            # Response has camelCase keys like desktopDevice1, auxDevice1, etc.
+            if special:
+                for attr in dir(special):
+                    if attr.startswith("_"):
+                        continue
+                    val = getattr(special, attr, None)
+                    if isinstance(val, str) and val:
+                        # attr is like 'desktopDevice1', val is the input name
+                        await self._fetch_audio_state(val, new_inputs)
+        except Exception as err:
+            _LOGGER.debug("Could not refresh special inputs: %s", err)
+
+        self._audio_inputs = new_inputs
+        _LOGGER.info("Refreshed audio inputs: %s", list(new_inputs.keys()))
+
+    async def _fetch_audio_state(self, name: str, target: dict) -> None:
+        """Fetch mute + volume for a single input and add to target dict."""
+        try:
+            mute_resp = await self.hass.async_add_executor_job(
+                self._client.get_input_mute, name
+            )
+            muted = mute_resp.input_muted if mute_resp else False
+        except Exception:
+            muted = False
+        try:
+            vol_resp = await self.hass.async_add_executor_job(
+                self._client.get_input_volume, name
+            )
+            vol_db = vol_resp.input_volume_db if vol_resp else 0.0
+        except Exception:
+            vol_db = 0.0
+        target[name] = {"muted": muted, "volume_db": vol_db}
 
     async def _refresh_scene_items(self) -> None:
         """Refresh scene item visibility for all scenes."""
@@ -506,14 +533,15 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("get_scene_preview: requesting screenshot for '%s'", scene_name)
             # OBS WebSocket v5: GetSourceScreenshot
             # Scenes are sources in OBS, so GetSourceScreenshot works for scenes too.
-            # Use jpg with reasonable size for HA preview (640px wide, auto height)
+            # Use jpg with reasonable size for HA preview (640px wide)
+            # OBS requires width and height >= 8, 0 might not work
             screenshot = await self.hass.async_add_executor_job(
                 self._client.get_source_screenshot,
                 scene_name,
                 "jpg",
-                640,  # width: scale to 640px for preview
-                0,    # height: 0 = keep aspect ratio
-                80,   # quality: 80% jpg
+                640,   # width
+                360,   # height (16:9 aspect, OBS scales to inner)
+                80,    # quality: 80% jpg
             )
             # as_dataclass converts top-level keys to snake_case
             # The response has 'imageData' -> 'image_data'
