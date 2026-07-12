@@ -5,10 +5,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from homeassistant.components.image import ImageEntity
+from homeassistant.components.image import ImageEntity, ImageEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -45,7 +44,7 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         entry_id: str,
         hass: HomeAssistant,
     ) -> None:
-        description = EntityDescription(
+        description = ImageEntityDescription(
             key="scene_preview",
             translation_key="scene_preview",
             icon="mdi:eye",

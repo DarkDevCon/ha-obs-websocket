@@ -10,7 +10,6 @@ from homeassistant.components.switch import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -158,7 +157,7 @@ class OBSSceneItemVisibilitySwitch(OBSEntity, SwitchEntity):
         scene_name: str,
         source_name: str,
     ) -> None:
-        description = EntityDescription(
+        description = SwitchEntityDescription(
             key=f"visibility_{scene_name}_{source_name}",
             translation_key="scene_item_visibility",
             translation_placeholders={"source": source_name, "scene": scene_name},

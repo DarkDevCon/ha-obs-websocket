@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components.number import (
+    NumberEntity,
+    NumberEntityDescription,
+    NumberMode,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -74,18 +77,19 @@ class OBSVolumeSlider(OBSEntity, NumberEntity):
         entry_id: str,
         source_name: str,
     ) -> None:
-        description = EntityDescription(
+        description = NumberEntityDescription(
             key=f"volume_{source_name}",
             translation_key="volume",
             translation_placeholders={"source": source_name},
             icon="mdi:volume-high",
+            native_unit_of_measurement="dB",
+            native_min_value=VOLUME_MIN,
+            native_max_value=VOLUME_MAX,
+            native_step=VOLUME_STEP,
+            mode=NumberMode.SLIDER,
         )
         super().__init__(coordinator, entry_id, description)
         self._source_name = source_name
-        self._attr_native_min_value = VOLUME_MIN
-        self._attr_native_max_value = VOLUME_MAX
-        self._attr_native_step = VOLUME_STEP
-        self._attr_mode = NumberMode.SLIDER
 
     @property
     def native_value(self) -> float | None:

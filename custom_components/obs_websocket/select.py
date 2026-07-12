@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.select import SelectEntity
+from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -33,8 +33,7 @@ class OBSSceneSelect(OBSEntity, SelectEntity):
         coordinator: OBSWebSocketCoordinator,
         entry_id: str,
     ) -> None:
-        from homeassistant.helpers.entity import EntityDescription
-        description = EntityDescription(
+        description = SelectEntityDescription(
             key="scene_selector",
             translation_key="scene_selector",
             icon="mdi:movie-open",
