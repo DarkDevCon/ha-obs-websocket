@@ -198,14 +198,15 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error getting replay buffer status: %s", err)
 
-        # Virtual camera status
+        # Virtual camera status (not all OBS setups have virtual cam)
         try:
             vcam = await self.hass.async_add_executor_job(
                 self._client.get_virtual_cam_status
             )
             self._virtualcam = bool(vcam.output_active) if vcam else False
-        except Exception as err:
-            _LOGGER.error("Error getting virtual cam status: %s", err)
+        except Exception:
+            _LOGGER.debug("Virtual cam not available, skipping")
+            self._virtualcam = False
 
         # Scenes list
         try:

@@ -125,6 +125,11 @@ class OBSSwitch(OBSEntity, SwitchEntity):
         """Return true if switch is on."""
         return getattr(self.coordinator, self._description.state_fn, False)
 
+    @property
+    def available(self) -> bool:
+        """Return True if the feature is available."""
+        return self.coordinator.last_update_success
+
     async def async_turn_on(self) -> None:
         """Turn the switch on."""
         fn = getattr(self.coordinator, self._description.turn_on_fn, None)
