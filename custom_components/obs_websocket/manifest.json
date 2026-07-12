@@ -9,5 +9,5 @@
   "icon": "icon.png",
   "loggers": ["custom_components.obs_websocket"],
   "requirements": ["obsws-python>=1.0.0"],
-  "version": "1.1.0"
+  "version": "1.2.0"
 }
