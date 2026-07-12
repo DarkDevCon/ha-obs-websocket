@@ -495,28 +495,35 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     async def get_scene_preview(self, scene_name: str | None = None) -> bytes | None:
         """Get a preview screenshot of the current or specified scene."""
         if not self._client:
+            _LOGGER.debug("get_scene_preview: no client")
             return None
         try:
             if scene_name is None:
                 scene_name = self._scene
             if scene_name is None:
+                _LOGGER.debug("get_scene_preview: no current scene")
                 return None
+            _LOGGER.debug("get_scene_preview: requesting screenshot for '%s'", scene_name)
             # OBS WebSocket v5: GetSourceScreenshot
-            # Signature: get_source_screenshot(name, img_format, width, height, quality)
+            # Scenes are sources in OBS, so GetSourceScreenshot works for scenes too.
+            # Use jpg with reasonable size for HA preview (640px wide, auto height)
             screenshot = await self.hass.async_add_executor_job(
                 self._client.get_source_screenshot,
                 scene_name,
-                "png",
-                0,  # width: 0 = source resolution
-                0,  # height: 0 = source resolution
-                -1,  # quality: -1 = default
+                "jpg",
+                640,  # width: scale to 640px for preview
+                0,    # height: 0 = keep aspect ratio
+                80,   # quality: 80% jpg
             )
             # as_dataclass converts top-level keys to snake_case
-            # The response has 'imageData' -> 'image_data' and 'imageWidth' -> 'image_width'
+            # The response has 'imageData' -> 'image_data'
             if hasattr(screenshot, "image_data"):
+                _LOGGER.debug("get_scene_preview: got image (%d bytes)", len(screenshot.image_data))
                 return base64.b64decode(screenshot.image_data)
             elif hasattr(screenshot, "img"):
                 return base64.b64decode(screenshot.img)
+            else:
+                _LOGGER.warning("get_scene_preview: unexpected response: %s", type(screenshot))
         except Exception as err:
-            _LOGGER.error("Error getting scene preview: %s", err)
+            _LOGGER.warning("Error getting scene preview for '%s': %s", scene_name, err)
         return None

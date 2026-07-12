@@ -50,13 +50,19 @@ class OBSScenePreview(OBSEntity, Camera):
 
     @property
     def available(self) -> bool:
-        """Return True if coordinator is connected."""
-        return self.coordinator.scene is not None
+        """Return True if coordinator is connected and has a current scene."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.scene is not None
+        )
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """Return a preview screenshot of the current scene."""
+        if not self.coordinator.scene:
+            return self._last_image
+
         now = time.time()
         # Throttle: only fetch if last fetch was > PREVIEW_INTERVAL ago
         if self._last_image is not None and (now - self._last_update) < PREVIEW_INTERVAL:
@@ -72,9 +78,9 @@ class OBSScenePreview(OBSEntity, Camera):
                 self._last_update = now
                 return image
         except asyncio.TimeoutError:
-            _LOGGER.debug("Scene preview timed out")
+            _LOGGER.warning("OBS scene preview timed out")
         except Exception as err:
-            _LOGGER.debug("Error getting scene preview: %s", err)
+            _LOGGER.warning("Error getting OBS scene preview: %s", err)
 
         return self._last_image
 
