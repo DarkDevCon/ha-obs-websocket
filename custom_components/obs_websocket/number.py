@@ -93,12 +93,13 @@ class OBSVolumeSlider(OBSEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current volume in dB."""
+        """Return the current volume in dB, rounded to 1 decimal place."""
         source = self.coordinator.audio_inputs.get(self._source_name)
         if source:
             val = source.get("volume_db", 0.0)
-            _LOGGER.debug("Volume %s = %.1f dB (from %s)", self._source_name, val, source)
-            return val
+            rounded = round(val, 1)
+            _LOGGER.debug("Volume %s = %.1f dB (raw=%.2f)", self._source_name, rounded, val)
+            return rounded
         _LOGGER.debug("Volume %s = None (not in audio_inputs: %s)", self._source_name, list(self.coordinator.audio_inputs.keys()))
         return None
 

@@ -307,7 +307,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             vol_db = vol_resp.input_volume_db if vol_resp else 0.0
         except Exception:
             vol_db = 0.0
-        target[name] = {"muted": muted, "volume_db": vol_db}
+        target[name] = {"muted": muted, "volume_db": round(vol_db, 1)}
 
     async def _refresh_scene_items(self) -> None:
         """Refresh scene item visibility for all scenes."""
@@ -422,9 +422,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         vol_db = data.input_volume_db
         if input_name:
             if input_name not in self._audio_inputs:
-                self._audio_inputs[input_name] = {"muted": False, "volume_db": vol_db}
+                self._audio_inputs[input_name] = {"muted": False, "volume_db": round(vol_db, 1)}
             else:
-                self._audio_inputs[input_name]["volume_db"] = vol_db
+                self._audio_inputs[input_name]["volume_db"] = round(vol_db, 1)
         self._fire_event("InputVolumeChanged", data)
         self._notify_update()
 
