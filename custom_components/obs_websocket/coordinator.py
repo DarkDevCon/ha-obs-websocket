@@ -14,6 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 
 SIGNAL_OBS_UPDATE = f"{DOMAIN}_update"
 
+
 class OBSWebSocketCoordinator(DataUpdateCoordinator):
     """Coordinator for OBS WebSocket connection."""
 
@@ -36,6 +37,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._password = password
         self._entry_id = entry_id
         self._client = None
+        self._event_client = None
         self._data: dict[str, Any] = {}
 
         # State
@@ -45,7 +47,8 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._replay_buffer: bool = False
         self._virtualcam: bool = False
         self._scenes: list[str] = []
-        self._sources: dict[str, dict] = {}
+        # Audio sources: {source_name: {"muted": bool, "volume_db": float}}
+        self._audio_inputs: dict[str, dict] = {}
 
     @property
     def host(self) -> str:
@@ -74,6 +77,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     @property
     def scenes(self) -> list[str]:
         return self._scenes
+
+    @property
+    def audio_inputs(self) -> dict[str, dict]:
+        return self._audio_inputs
 
     async def async_connect(self) -> None:
         """Connect to OBS WebSocket."""
@@ -112,10 +119,6 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._event_client = None
 
         if self._client:
-            try:
-                self._client = None
-            except Exception:
-                pass
             self._client = None
 
         _LOGGER.info("Disconnected from OBS WebSocket")
@@ -159,9 +162,54 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             self._scenes = [s.scene_name for s in scenes_resp.scenes] if scenes_resp else []
 
+            # Audio inputs
+            await self._refresh_audio_inputs()
+
         except Exception as err:
             _LOGGER.error("Error refreshing OBS state: %s", err)
 
+        self._notify_update()
+
+    async def _refresh_audio_inputs(self) -> None:
+        """Refresh audio input list and their mute/volume state."""
+        if not self._client:
+            return
+        try:
+            inputs = await self.hass.async_add_executor_job(
+                self._client.get_inputs
+            )
+            new_inputs: dict[str, dict] = {}
+            for inp in (inputs.inputs if inputs else []):
+                name = inp.input_name
+                try:
+                    mute_resp = await self.hass.async_add_executor_job(
+                        self._client.get_input_mute, name
+                    )
+                    muted = mute_resp.input_muted if mute_resp else False
+                except Exception:
+                    muted = False
+                try:
+                    vol_resp = await self.hass.async_add_executor_job(
+                        self._client.get_input_volume, name
+                    )
+                    vol_db = vol_resp.input_volume_db if vol_resp else 0.0
+                except Exception:
+                    vol_db = 0.0
+                new_inputs[name] = {"muted": muted, "volume_db": vol_db}
+            self._audio_inputs = new_inputs
+        except Exception as err:
+            _LOGGER.debug("Could not refresh audio inputs: %s", err)
+
+    async def _refresh_scenes(self) -> None:
+        if not self._client:
+            return
+        try:
+            scenes_resp = await self.hass.async_add_executor_job(
+                self._client.get_scene_list
+            )
+            self._scenes = [s.scene_name for s in scenes_resp.scenes] if scenes_resp else []
+        except Exception:
+            pass
         self._notify_update()
 
     def _on_obs_event(self, event) -> None:
@@ -189,24 +237,35 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         elif event_type == "SceneListChanged":
             self.hass.async_create_task(self._refresh_scenes())
 
+        elif event_type == "InputMuteStateChanged":
+            input_name = data.get("input_name")
+            muted = data.get("input_muted", False)
+            if input_name and input_name in self._audio_inputs:
+                self._audio_inputs[input_name]["muted"] = muted
+
+        elif event_type == "InputVolumeChanged":
+            input_name = data.get("input_name")
+            vol_db = data.get("input_volume_db", 0.0)
+            if input_name:
+                if input_name not in self._audio_inputs:
+                    self._audio_inputs[input_name] = {"muted": False, "volume_db": vol_db}
+                else:
+                    self._audio_inputs[input_name]["volume_db"] = vol_db
+
+        elif event_type == "InputCreated":
+            self.hass.async_create_task(self._refresh_audio_inputs())
+
+        elif event_type == "InputRemoved":
+            input_name = data.get("input_name")
+            if input_name and input_name in self._audio_inputs:
+                del self._audio_inputs[input_name]
+
         # Fire HA event
         self.hass.bus.async_fire(
             EVENT_OBS_EVENT,
             {"event_type": event_type, "data": data, "entry_id": self._entry_id},
         )
 
-        self._notify_update()
-
-    async def _refresh_scenes(self) -> None:
-        if not self._client:
-            return
-        try:
-            scenes_resp = await self.hass.async_add_executor_job(
-                self._client.get_scene_list
-            )
-            self._scenes = [s.scene_name for s in scenes_resp.scenes] if scenes_resp else []
-        except Exception:
-            pass
         self._notify_update()
 
     @callback
@@ -236,6 +295,11 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     async def toggle_mute(self, source: str) -> None:
         await self.hass.async_add_executor_job(
             self._client.toggle_input_mute, source
+        )
+
+    async def set_mute(self, source: str, muted: bool) -> None:
+        await self.hass.async_add_executor_job(
+            self._client.set_input_mute, source, muted
         )
 
     async def start_replay_buffer(self) -> None:

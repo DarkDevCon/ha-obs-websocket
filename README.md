@@ -4,10 +4,14 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 
 ## Features
 
-- 🎥 **Scene Monitoring** — current scene sensor + scene list
+- 🎥 **Scene Selector** — Dropdown to switch between scenes
 - 🎬 **Streaming/Recording Control** — switches and buttons for stream, recording, replay buffer, virtual camera
+- 🔊 **Volume Sliders** — per audio source, in dB (-60 to 0)
+- 🔇 **Mute Switches** — per audio source
+- 📊 **Sensors** — current scene, streaming/recording/replay/virtualcam status, scene count
 - 🔌 **Event-Driven** — real-time updates via OBS WebSocket events (no polling)
 - 🎛️ **Services** — `set_scene`, `start_streaming`, `stop_streaming`, `start_recording`, `stop_recording`, `toggle_mute`
+- 🌐 **Multi-Instance** — connect to multiple OBS Studio instances simultaneously
 - 🌐 **Multi-Language** — English + German UI strings
 
 ## Requirements
@@ -35,6 +39,7 @@ Home Assistant custom integration for OBS Studio via WebSocket.
    - **Host**: IP address of your OBS machine (e.g. `192.168.1.100`)
    - **Port**: `4455` (default)
    - **Password**: Your OBS WebSocket password (Tools → WebSocket Server Settings in OBS)
+4. **Repeat** for additional OBS instances — each gets its own device entry
 
 ## Entities
 
@@ -48,6 +53,11 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | Virtual Camera | on/off |
 | Scene Count | Number of scenes |
 
+### Select
+| Select | Description |
+|--------|-------------|
+| Scene | Dropdown with all available scenes |
+
 ### Switches
 | Switch | Action |
 |--------|--------|
@@ -55,6 +65,12 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | Recording | Start/Stop recording |
 | Replay Buffer | Start/Stop replay buffer |
 | Virtual Camera | Start/Stop virtual cam |
+| Mute: {source} | Mute/unmute per audio source (auto-created) |
+
+### Number (Sliders)
+| Number | Description |
+|--------|-------------|
+| Volume: {source} | Volume in dB per audio source (auto-created, -60 to 0) |
 
 ### Buttons
 | Button | Action |
@@ -65,14 +81,16 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | Stop Recording | Stop recording |
 
 ### Services
-| Service | Description |
-|---------|-------------|
-| `obs_websocket.set_scene` | Switch to a scene (param: `scene`) |
-| `obs_websocket.start_streaming` | Start streaming |
-| `obs_websocket.stop_streaming` | Stop streaming |
-| `obs_websocket.start_recording` | Start recording |
-| `obs_websocket.stop_recording` | Stop recording |
-| `obs_websocket.toggle_mute` | Toggle mute on audio source (param: `source`) |
+| Service | Parameters | Description |
+|---------|-----------|-------------|
+| `obs_websocket.set_scene` | `scene` (req), `entry_id` (opt) | Switch to a scene |
+| `obs_websocket.start_streaming` | `entry_id` (opt) | Start streaming |
+| `obs_websocket.stop_streaming` | `entry_id` (opt) | Stop streaming |
+| `obs_websocket.start_recording` | `entry_id` (opt) | Start recording |
+| `obs_websocket.stop_recording` | `entry_id` (opt) | Stop recording |
+| `obs_websocket.toggle_mute` | `source` (req), `entry_id` (opt) | Toggle mute on audio source |
+
+> **Multi-Instance:** `entry_id` is optional. If omitted, services apply to all or the first matching instance.
 
 ## Development
 

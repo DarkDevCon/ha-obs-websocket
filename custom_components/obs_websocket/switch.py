@@ -1,4 +1,4 @@
-"""Switch platform for OBS WebSocket — toggle streaming/recording/etc."""
+"""Switch platform for OBS WebSocket — streaming/recording toggles + per-source mute."""
 from __future__ import annotations
 
 import logging
@@ -9,11 +9,13 @@ from homeassistant.components.switch import (
     SwitchEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
-from .coordinator import OBSWebSocketCoordinator
+from .coordinator import OBSWebSocketCoordinator, SIGNAL_OBS_UPDATE
 from .entity import OBSEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,11 +72,37 @@ async def async_setup_entry(
     """Set up OBS WebSocket switches."""
     coordinator: OBSWebSocketCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = []
+    # Static switches (streaming, recording, etc.)
+    entities: list[SwitchEntity] = []
     for description in SWITCHES:
         entities.append(OBSSwitch(coordinator, entry.entry_id, description))
 
+    # Dynamic mute switches per audio source
+    mute_switches: list[OBSMuteSwitch] = []
+    for source_name in coordinator.audio_inputs:
+        mute_switches.append(OBSMuteSwitch(coordinator, entry.entry_id, source_name))
+    entities.extend(mute_switches)
+
     async_add_entities(entities)
+
+    # Listen for new audio sources
+    @callback
+    def _async_update_entities(entry_id: str) -> None:
+        if entry_id != entry.entry_id:
+            return
+        existing_names = {sw._source_name for sw in mute_switches}
+        new_entities = []
+        for source_name in coordinator.audio_inputs:
+            if source_name not in existing_names:
+                new_sw = OBSMuteSwitch(coordinator, entry.entry_id, source_name)
+                mute_switches.append(new_sw)
+                new_entities.append(new_sw)
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_update_entities)
+    )
 
 
 class OBSSwitch(OBSEntity, SwitchEntity):
@@ -105,3 +133,40 @@ class OBSSwitch(OBSEntity, SwitchEntity):
         fn = getattr(self.coordinator, self._description.turn_off_fn)
         if fn:
             await fn()
+
+
+class OBSMuteSwitch(OBSEntity, SwitchEntity):
+    """OBS WebSocket mute switch for an audio source."""
+
+    def __init__(
+        self,
+        coordinator: OBSWebSocketCoordinator,
+        entry_id: str,
+        source_name: str,
+    ) -> None:
+        description = EntityDescription(
+            key=f"mute_{source_name}",
+            name=f"Mute: {source_name}",
+            icon="mdi:volume-mute",
+        )
+        super().__init__(coordinator, entry_id, description)
+        self._source_name = source_name
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if source is muted."""
+        source = self.coordinator.audio_inputs.get(self._source_name)
+        return source.get("muted", False) if source else False
+
+    @property
+    def available(self) -> bool:
+        """Return True if the source still exists."""
+        return self._source_name in self.coordinator.audio_inputs
+
+    async def async_turn_on(self) -> None:
+        """Mute the source."""
+        await self.coordinator.set_mute(self._source_name, True)
+
+    async def async_turn_off(self) -> None:
+        """Unmute the source."""
+        await self.coordinator.set_mute(self._source_name, False)

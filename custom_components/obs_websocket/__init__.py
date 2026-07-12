@@ -3,16 +3,24 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import selector
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_PASSWORD, EVENT_OBS_EVENT
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON, Platform.CAMERA]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.BUTTON,
+    Platform.SELECT,
+    Platform.NUMBER,
+]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up via YAML not supported, use config flow."""
@@ -42,8 +50,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register services
-    _register_services(hass, entry)
+    # Register services (only once, they route to the right coordinator)
+    _register_services(hass)
 
     return True
 
@@ -59,35 +67,89 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     return unload_ok
 
-def _register_services(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Register integration services."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+def _get_coordinator_for_entry(hass: HomeAssistant, entry_id: str):
+    """Get coordinator by entry_id."""
+    return hass.data[DOMAIN].get(entry_id)
+
+def _register_services(hass: HomeAssistant) -> None:
+    """Register integration services (multi-instance aware)."""
+
+    def _get_coordinators(hass: HomeAssistant) -> list:
+        """Return all registered coordinators."""
+        return list(hass.data.get(DOMAIN, {}).values())
 
     async def handle_set_scene(call: ServiceCall) -> None:
         scene_name = call.data.get("scene")
-        if scene_name:
-            await coordinator.set_scene(scene_name)
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator and scene_name:
+                await coordinator.set_scene(scene_name)
+        else:
+            # Apply to all coordinators
+            for coordinator in _get_coordinators(hass):
+                if scene_name and scene_name in coordinator.scenes:
+                    await coordinator.set_scene(scene_name)
+                    break
 
     async def handle_start_streaming(call: ServiceCall) -> None:
-        await coordinator.start_streaming()
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator:
+                await coordinator.start_streaming()
+        else:
+            for coordinator in _get_coordinators(hass):
+                await coordinator.start_streaming()
 
     async def handle_stop_streaming(call: ServiceCall) -> None:
-        await coordinator.stop_streaming()
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator:
+                await coordinator.stop_streaming()
+        else:
+            for coordinator in _get_coordinators(hass):
+                await coordinator.stop_streaming()
 
     async def handle_start_recording(call: ServiceCall) -> None:
-        await coordinator.start_recording()
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator:
+                await coordinator.start_recording()
+        else:
+            for coordinator in _get_coordinators(hass):
+                await coordinator.start_recording()
 
     async def handle_stop_recording(call: ServiceCall) -> None:
-        await coordinator.stop_recording()
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator:
+                await coordinator.stop_recording()
+        else:
+            for coordinator in _get_coordinators(hass):
+                await coordinator.stop_recording()
 
     async def handle_toggle_mute(call: ServiceCall) -> None:
         source = call.data.get("source")
-        if source:
-            await coordinator.toggle_mute(source)
+        entry_id = call.data.get("entry_id")
+        if entry_id:
+            coordinator = _get_coordinator_for_entry(hass, entry_id)
+            if coordinator and source:
+                await coordinator.toggle_mute(source)
+        elif source:
+            for coordinator in _get_coordinators(hass):
+                if source in coordinator.audio_inputs:
+                    await coordinator.toggle_mute(source)
+                    break
 
-    hass.services.async_register(DOMAIN, "set_scene", handle_set_scene)
-    hass.services.async_register(DOMAIN, "start_streaming", handle_start_streaming)
-    hass.services.async_register(DOMAIN, "stop_streaming", handle_stop_streaming)
-    hass.services.async_register(DOMAIN, "start_recording", handle_start_recording)
-    hass.services.async_register(DOMAIN, "stop_recording", handle_stop_recording)
-    hass.services.async_register(DOMAIN, "toggle_mute", handle_toggle_mute)
+    # Only register once
+    if not hass.services.has_service(DOMAIN, "set_scene"):
+        hass.services.async_register(DOMAIN, "set_scene", handle_set_scene)
+        hass.services.async_register(DOMAIN, "start_streaming", handle_start_streaming)
+        hass.services.async_register(DOMAIN, "stop_streaming", handle_stop_streaming)
+        hass.services.async_register(DOMAIN, "start_recording", handle_start_recording)
+        hass.services.async_register(DOMAIN, "stop_recording", handle_stop_recording)
+        hass.services.async_register(DOMAIN, "toggle_mute", handle_toggle_mute)

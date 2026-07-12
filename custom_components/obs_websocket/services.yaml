@@ -9,22 +9,57 @@ set_scene:
       example: "Scene 1"
       selector:
         text:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance. If omitted, applies to the first matching instance."
+      required: false
+      example: "abc123..."
+      selector:
+        text:
 
 start_streaming:
   name: Start Streaming
   description: Start streaming in OBS Studio.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance. If omitted, starts on all instances."
+      required: false
+      selector:
+        text:
 
 stop_streaming:
   name: Stop Streaming
   description: Stop streaming in OBS Studio.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance. If omitted, stops on all instances."
+      required: false
+      selector:
+        text:
 
 start_recording:
   name: Start Recording
   description: Start recording in OBS Studio.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance. If omitted, starts on all instances."
+      required: false
+      selector:
+        text:
 
 stop_recording:
   name: Stop Recording
   description: Stop recording in OBS Studio.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance. If omitted, stops on all instances."
+      required: false
+      selector:
+        text:
 
 toggle_mute:
   name: Toggle Mute
@@ -35,5 +70,11 @@ toggle_mute:
       description: The name of the audio source to toggle mute.
       required: true
       example: "Microphone"
+      selector:
+        text:
+    entry_id:
+      name: Entry ID
+      description: "Optional: target a specific OBS instance."
+      required: false
       selector:
         text:
