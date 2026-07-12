@@ -7,7 +7,7 @@
         "data": {
           "host": "Host (IP address)",
           "port": "Port",
-          "password": "Password (leave empty if no password set)"
+          "password": "Passwo… set)"
         }
       }
     },
@@ -23,7 +23,7 @@
       "init": {
         "title": "OBS Studio WebSocket Options",
         "data": {
-          "password": "Password"
+          "password": "***"
         }
       }
     }
@@ -51,12 +51,6 @@
       },
       "virtualcam": {
         "name": "Virtual Camera"
-      },
-      "mute": {
-        "name": "Mute: {source}"
-      },
-      "scene_item_visibility": {
-        "name": "Visible: {source} ({scene})"
       }
     },
     "sensor": {
