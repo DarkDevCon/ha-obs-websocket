@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 from .coordinator import OBSWebSocketCoordinator, SIGNAL_OBS_UPDATE
@@ -64,6 +65,8 @@ async def async_setup_entry(
 
 class OBSVolumeSlider(OBSEntity, NumberEntity):
     """OBS WebSocket audio volume slider."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

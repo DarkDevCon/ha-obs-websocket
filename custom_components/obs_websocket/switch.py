@@ -1,4 +1,4 @@
-"""Switch platform for OBS WebSocket — streaming/recording toggles."""
+"""Switch platform for OBS WebSocket — streaming/recording toggles and scene item visibility."""
 from __future__ import annotations
 
 import logging
@@ -9,11 +9,13 @@ from homeassistant.components.switch import (
     SwitchEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import EntityDescription, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
-from .coordinator import OBSWebSocketCoordinator
+from .coordinator import OBSWebSocketCoordinator, SIGNAL_OBS_UPDATE
 from .entity import OBSEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,11 +72,45 @@ async def async_setup_entry(
     """Set up OBS WebSocket switches."""
     coordinator: OBSWebSocketCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # Static switches (streaming, recording, etc.)
     entities: list[SwitchEntity] = []
     for description in SWITCHES:
         entities.append(OBSSwitch(coordinator, entry.entry_id, description))
 
+    # Dynamic visibility switches per scene item (disabled by default via entity_category)
+    vis_switches: list[OBSSceneItemVisibilitySwitch] = []
+    for scene_name, sources in coordinator.scene_items.items():
+        for source_name in sources:
+            vis_switches.append(
+                OBSSceneItemVisibilitySwitch(coordinator, entry.entry_id, scene_name, source_name)
+            )
+    entities.extend(vis_switches)
+
     async_add_entities(entities)
+
+    # Listen for new scene items
+    @callback
+    def _async_update_entities(entry_id: str) -> None:
+        if entry_id != entry.entry_id:
+            return
+
+        existing_vis_keys = {(sw._scene_name, sw._source_name) for sw in vis_switches}
+        new_entities = []
+        for scene_name, sources in coordinator.scene_items.items():
+            for source_name in sources:
+                if (scene_name, source_name) not in existing_vis_keys:
+                    new_sw = OBSSceneItemVisibilitySwitch(
+                        coordinator, entry.entry_id, scene_name, source_name
+                    )
+                    vis_switches.append(new_sw)
+                    new_entities.append(new_sw)
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_OBS_UPDATE, _async_update_entities)
+    )
 
 
 class OBSSwitch(OBSEntity, SwitchEntity):
@@ -109,3 +145,52 @@ class OBSSwitch(OBSEntity, SwitchEntity):
             await fn()
         else:
             _LOGGER.warning("Action %s not found on coordinator", self._description.turn_off_fn)
+
+
+class OBSSceneItemVisibilitySwitch(OBSEntity, SwitchEntity):
+    """OBS WebSocket visibility toggle for a source within a scene.
+
+    Disabled by default via entity_category=config.
+    Enable in HA entity registry to use.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: OBSWebSocketCoordinator,
+        entry_id: str,
+        scene_name: str,
+        source_name: str,
+    ) -> None:
+        description = EntityDescription(
+            key=f"visibility_{scene_name}_{source_name}",
+            translation_key="scene_item_visibility",
+            translation_placeholders={"source": source_name, "scene": scene_name},
+            icon="mdi:eye",
+        )
+        super().__init__(coordinator, entry_id, description)
+        self._scene_name = scene_name
+        self._source_name = source_name
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the source is visible in the scene."""
+        scene = self.coordinator.scene_items.get(self._scene_name, {})
+        return scene.get(self._source_name, True)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the scene and source still exist."""
+        return (
+            self._scene_name in self.coordinator.scene_items
+            and self._source_name in self.coordinator.scene_items.get(self._scene_name, {})
+        )
+
+    async def async_turn_on(self) -> None:
+        """Show the source in the scene."""
+        await self.coordinator.set_scene_item_enabled(self._scene_name, self._source_name, True)
+
+    async def async_turn_off(self) -> None:
+        """Hide the source in the scene."""
+        await self.coordinator.set_scene_item_enabled(self._scene_name, self._source_name, False)

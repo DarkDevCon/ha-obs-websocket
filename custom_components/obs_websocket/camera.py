@@ -60,7 +60,9 @@ class OBSScenePreview(OBSEntity, Camera):
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """Return a preview screenshot of the current scene."""
-        if not self.coordinator.scene:
+        scene = self.coordinator.scene
+        if not scene:
+            _LOGGER.debug("Preview: no current scene available")
             return self._last_image
 
         now = time.time()
@@ -68,19 +70,23 @@ class OBSScenePreview(OBSEntity, Camera):
         if self._last_image is not None and (now - self._last_update) < PREVIEW_INTERVAL:
             return self._last_image
 
+        _LOGGER.info("Preview: requesting screenshot for scene '%s'", scene)
         try:
             image = await asyncio.wait_for(
                 self.coordinator.get_scene_preview(),
                 timeout=15,
             )
             if image:
+                _LOGGER.info("Preview: got %d bytes for scene '%s'", len(image), scene)
                 self._last_image = image
                 self._last_update = now
                 return image
+            else:
+                _LOGGER.warning("Preview: get_scene_preview returned None for scene '%s'", scene)
         except asyncio.TimeoutError:
-            _LOGGER.warning("OBS scene preview timed out")
+            _LOGGER.warning("Preview: timed out getting screenshot for scene '%s'", scene)
         except Exception as err:
-            _LOGGER.warning("Error getting OBS scene preview: %s", err)
+            _LOGGER.warning("Preview: error getting screenshot for scene '%s': %s", scene, err)
 
         return self._last_image
 

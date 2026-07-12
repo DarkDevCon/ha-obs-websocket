@@ -7,7 +7,7 @@
         "data": {
           "host": "Host (IP-Adresse)",
           "port": "Port",
-          "password": "Passwo…etzt)"
+          "password": "***)"
         }
       }
     },
@@ -51,6 +51,9 @@
       },
       "virtualcam": {
         "name": "Virtuelle Kamera"
+      },
+      "scene_item_visibility": {
+        "name": "Sichtbar: {source} ({scene})"
       }
     },
     "sensor": {
