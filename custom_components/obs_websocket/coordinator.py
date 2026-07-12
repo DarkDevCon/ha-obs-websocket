@@ -13,6 +13,12 @@ from .const import DOMAIN, EVENT_OBS_EVENT
 
 _LOGGER = logging.getLogger(__name__)
 
+# Suppress obsws_python's verbose exception logging for 604 (not available) errors.
+# The library logs every OBSSDKRequestError at ERROR level with traceback before
+# raising, even for expected conditions like "VirtualCam not available" or
+# "input does not support audio". We catch these ourselves, so silence the library.
+logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
+
 SIGNAL_OBS_UPDATE = f"{DOMAIN}_update"
 
 
