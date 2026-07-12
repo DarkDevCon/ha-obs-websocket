@@ -8,5 +8,5 @@
   "issue_tracker": "https://github.com/DarkDevCon/ha-obs-websocket/issues",
   "loggers": ["custom_components.obs_websocket"],
   "requirements": ["obsws-python>=1.0.0"],
-  "version": "1.2.0"
+  "version": "1.2.1"
 }
