@@ -95,7 +95,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     def scene_items(self) -> dict[str, dict[str, bool]]:
         return self._scene_items
 
-    async def async_connect(self) -> None:
+    async def async_connect(self, skip_initial_refresh: bool = False) -> None:
         """Connect to OBS WebSocket."""
         import obsws_python as obs
 
@@ -109,8 +109,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
         )
 
-        # Get initial state
-        await self._refresh_state()
+        # Get initial state (unless deferred to after entity setup)
+        if not skip_initial_refresh:
+            await self._refresh_state()
 
         # EventClient auto-connects and starts listening in __init__
         self._event_client = await self.hass.async_add_executor_job(
@@ -157,6 +158,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._client = None
 
         _LOGGER.info("Disconnected from OBS WebSocket")
+
+    async def refresh_state(self) -> None:
+        """Public wrapper for _refresh_state."""
+        await self._refresh_state()
 
     async def _refresh_state(self) -> None:
         """Refresh all state from OBS.
@@ -233,6 +238,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         # Scene item visibility
         await self._refresh_scene_items()
+
+        # Mark as successfully updated so CoordinatorEntity.available returns True
+        self.last_update_success = True
 
         self._notify_update()
 

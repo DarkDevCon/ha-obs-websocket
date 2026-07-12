@@ -96,7 +96,10 @@ class OBSVolumeSlider(OBSEntity, NumberEntity):
         """Return the current volume in dB."""
         source = self.coordinator.audio_inputs.get(self._source_name)
         if source:
-            return source.get("volume_db", 0.0)
+            val = source.get("volume_db", 0.0)
+            _LOGGER.debug("Volume %s = %.1f dB (from %s)", self._source_name, val, source)
+            return val
+        _LOGGER.debug("Volume %s = None (not in audio_inputs: %s)", self._source_name, list(self.coordinator.audio_inputs.keys()))
         return None
 
     async def async_set_native_value(self, value: float) -> None:

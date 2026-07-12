@@ -41,12 +41,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     try:
-        await coordinator.async_connect()
+        await coordinator.async_connect(skip_initial_refresh=True)
     except Exception as err:
         _LOGGER.error("Failed to connect to OBS WebSocket: %s", err)
         return False
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Now that all platforms/entities are set up, do the initial state refresh.
+    # This ensures entities are registered as listeners before we notify them.
+    await coordinator.refresh_state()
 
     # Register services (only once, they route to the right coordinator)
     _register_services(hass)
