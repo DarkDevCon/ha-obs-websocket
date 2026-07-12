@@ -49,6 +49,8 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._scenes: list[str] = []
         # Audio sources: {source_name: {"muted": bool, "volume_db": float}}
         self._audio_inputs: dict[str, dict] = {}
+        # Scene item visibility: {scene_name: {source_name: bool}}
+        self._scene_items: dict[str, dict[str, bool]] = {}
 
     @property
     def host(self) -> str:
@@ -81,6 +83,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     @property
     def audio_inputs(self) -> dict[str, dict]:
         return self._audio_inputs
+
+    @property
+    def scene_items(self) -> dict[str, dict[str, bool]]:
+        return self._scene_items
 
     async def async_connect(self) -> None:
         """Connect to OBS WebSocket."""
@@ -165,6 +171,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             # Audio inputs
             await self._refresh_audio_inputs()
 
+            # Scene item visibility
+            await self._refresh_scene_items()
+
         except Exception as err:
             _LOGGER.error("Error refreshing OBS state: %s", err)
 
@@ -199,6 +208,30 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._audio_inputs = new_inputs
         except Exception as err:
             _LOGGER.debug("Could not refresh audio inputs: %s", err)
+
+    async def _refresh_scene_items(self) -> None:
+        """Refresh scene item visibility for all scenes."""
+        if not self._client:
+            return
+        try:
+            new_scene_items: dict[str, dict[str, bool]] = {}
+            for scene_name in self._scenes:
+                try:
+                    items = await self.hass.async_add_executor_job(
+                        self._client.get_scene_item_list, scene_name
+                    )
+                    scene_vis: dict[str, bool] = {}
+                    for item in (items.scene_items if items else []):
+                        source_name = item.get("source_name", "")
+                        visible = item.get("scene_item_visible", True)
+                        if source_name:
+                            scene_vis[source_name] = visible
+                    new_scene_items[scene_name] = scene_vis
+                except Exception:
+                    pass
+            self._scene_items = new_scene_items
+        except Exception as err:
+            _LOGGER.debug("Could not refresh scene items: %s", err)
 
     async def _refresh_scenes(self) -> None:
         if not self._client:
@@ -236,6 +269,18 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         elif event_type == "SceneListChanged":
             self.hass.async_create_task(self._refresh_scenes())
+            self.hass.async_create_task(self._refresh_scene_items())
+
+        elif event_type == "SceneItemEnableStateChanged":
+            scene_name = data.get("scene_name")
+            item_id = data.get("scene_item_id")
+            visible = data.get("scene_item_enabled", True)
+            # Try to find source name by item_id in our cached data
+            if scene_name and scene_name in self._scene_items:
+                for src_name, vis in self._scene_items[scene_name].items():
+                    # We don't have item_id mapping, so just trigger a refresh
+                    break
+            self.hass.async_create_task(self._refresh_scene_items())
 
         elif event_type == "InputMuteStateChanged":
             input_name = data.get("input_name")
@@ -323,3 +368,51 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(
             self._client.set_input_volume, source, vol_db=volume_db
         )
+
+    async def set_scene_item_enabled(self, scene_name: str, source_name: str, enabled: bool) -> None:
+        """Set visibility of a source within a scene."""
+        # Find the scene item id for the source in the scene
+        items = await self.hass.async_add_executor_job(
+            self._client.get_scene_item_list, scene_name
+        )
+        item_id = None
+        for item in (items.scene_items if items else []):
+            if item.get("source_name") == source_name:
+                item_id = item.get("scene_item_id")
+                break
+        if item_id is not None:
+            await self.hass.async_add_executor_job(
+                self._client.set_scene_item_enabled, scene_name, item_id, enabled
+            )
+            # Update local state
+            if scene_name in self._scene_items:
+                self._scene_items[scene_name][source_name] = enabled
+            self._notify_update()
+        else:
+            _LOGGER.warning("Source %s not found in scene %s", source_name, scene_name)
+
+    async def get_scene_preview(self, scene_name: str | None = None) -> bytes | None:
+        """Get a preview screenshot of the current or specified scene."""
+        if not self._client:
+            return None
+        try:
+            if scene_name is None:
+                scene_name = self._scene
+            if scene_name is None:
+                return None
+            # OBS WebSocket v5: GetSourceScreenshot
+            screenshot = await self.hass.async_add_executor_job(
+                self._client.get_source_screenshot,
+                scene_name,
+                "png",
+            )
+            # The response has a 'img' field with base64-encoded PNG
+            if hasattr(screenshot, 'img'):
+                import base64
+                return base64.b64decode(screenshot.img)
+            elif hasattr(screenshot, 'image_data'):
+                import base64
+                return base64.b64decode(screenshot.image_data)
+        except Exception as err:
+            _LOGGER.error("Error getting scene preview: %s", err)
+        return None

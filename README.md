@@ -8,6 +8,8 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 - 🎬 **Streaming/Recording Control** — switches and buttons for stream, recording, replay buffer, virtual camera
 - 🔊 **Volume Sliders** — per audio source, in dB (-60 to 0)
 - 🔇 **Mute Switches** — per audio source
+- 👁️ **Source Visibility Toggles** — show/hide sources per scene
+- 📸 **Scene Preview** — live camera entity with screenshot of current scene
 - 📊 **Sensors** — current scene, streaming/recording/replay/virtualcam status, scene count
 - 🔌 **Event-Driven** — real-time updates via OBS WebSocket events (no polling)
 - 🎛️ **Services** — `set_scene`, `start_streaming`, `stop_streaming`, `start_recording`, `stop_recording`, `toggle_mute`
@@ -66,11 +68,17 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | Replay Buffer | Start/Stop replay buffer |
 | Virtual Camera | Start/Stop virtual cam |
 | Mute: {source} | Mute/unmute per audio source (auto-created) |
+| Visible: {source} ({scene}) | Show/hide source per scene (auto-created) |
 
 ### Number (Sliders)
 | Number | Description |
 |--------|-------------|
 | Volume: {source} | Volume in dB per audio source (auto-created, -60 to 0) |
+
+### Camera
+| Camera | Description |
+|--------|-------------|
+| Scene Preview | Live screenshot of current scene (refreshes every 10s) |
 
 ### Buttons
 | Button | Action |

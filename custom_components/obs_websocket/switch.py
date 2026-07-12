@@ -1,4 +1,4 @@
-"""Switch platform for OBS WebSocket — streaming/recording toggles + per-source mute."""
+"""Switch platform for OBS WebSocket — streaming/recording toggles, per-source mute, and scene item visibility."""
 from __future__ import annotations
 
 import logging
@@ -83,20 +83,43 @@ async def async_setup_entry(
         mute_switches.append(OBSMuteSwitch(coordinator, entry.entry_id, source_name))
     entities.extend(mute_switches)
 
+    # Dynamic visibility switches per scene item
+    vis_switches: list[OBSSceneItemVisibilitySwitch] = []
+    for scene_name, sources in coordinator.scene_items.items():
+        for source_name in sources:
+            vis_switches.append(
+                OBSSceneItemVisibilitySwitch(coordinator, entry.entry_id, scene_name, source_name)
+            )
+    entities.extend(vis_switches)
+
     async_add_entities(entities)
 
-    # Listen for new audio sources
+    # Listen for new audio sources and scene items
     @callback
     def _async_update_entities(entry_id: str) -> None:
         if entry_id != entry.entry_id:
             return
-        existing_names = {sw._source_name for sw in mute_switches}
+
+        # New mute switches
+        existing_mute_names = {sw._source_name for sw in mute_switches}
         new_entities = []
         for source_name in coordinator.audio_inputs:
-            if source_name not in existing_names:
+            if source_name not in existing_mute_names:
                 new_sw = OBSMuteSwitch(coordinator, entry.entry_id, source_name)
                 mute_switches.append(new_sw)
                 new_entities.append(new_sw)
+
+        # New visibility switches
+        existing_vis_keys = {(sw._scene_name, sw._source_name) for sw in vis_switches}
+        for scene_name, sources in coordinator.scene_items.items():
+            for source_name in sources:
+                if (scene_name, source_name) not in existing_vis_keys:
+                    new_sw = OBSSceneItemVisibilitySwitch(
+                        coordinator, entry.entry_id, scene_name, source_name
+                    )
+                    vis_switches.append(new_sw)
+                    new_entities.append(new_sw)
+
         if new_entities:
             async_add_entities(new_entities)
 
@@ -170,3 +193,45 @@ class OBSMuteSwitch(OBSEntity, SwitchEntity):
     async def async_turn_off(self) -> None:
         """Unmute the source."""
         await self.coordinator.set_mute(self._source_name, False)
+
+
+class OBSSceneItemVisibilitySwitch(OBSEntity, SwitchEntity):
+    """OBS WebSocket visibility toggle for a source within a scene."""
+
+    def __init__(
+        self,
+        coordinator: OBSWebSocketCoordinator,
+        entry_id: str,
+        scene_name: str,
+        source_name: str,
+    ) -> None:
+        description = EntityDescription(
+            key=f"visibility_{scene_name}_{source_name}",
+            name=f"Visible: {source_name} ({scene_name})",
+            icon="mdi:eye",
+        )
+        super().__init__(coordinator, entry_id, description)
+        self._scene_name = scene_name
+        self._source_name = source_name
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the source is visible in the scene."""
+        scene = self.coordinator.scene_items.get(self._scene_name, {})
+        return scene.get(self._source_name, True)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the scene and source still exist."""
+        return (
+            self._scene_name in self.coordinator.scene_items
+            and self._source_name in self.coordinator.scene_items.get(self._scene_name, {})
+        )
+
+    async def async_turn_on(self) -> None:
+        """Show the source in the scene."""
+        await self.coordinator.set_scene_item_enabled(self._scene_name, self._source_name, True)
+
+    async def async_turn_off(self) -> None:
+        """Hide the source in the scene."""
+        await self.coordinator.set_scene_item_enabled(self._scene_name, self._source_name, False)
