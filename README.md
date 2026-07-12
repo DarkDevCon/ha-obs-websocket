@@ -1,15 +1,18 @@
 # ha-obs-websocket
 
+<p align="center">
+  <img src="custom_components/obs_websocket/icon.png" width="128" alt="OBS Studio WebSocket Logo">
+</p>
+
 Home Assistant custom integration for OBS Studio via WebSocket.
 
 ## Features
 
 - 🎥 **Scene Selector** — Dropdown to switch between scenes
-- 🎬 **Streaming/Recording Control** — switches and buttons for stream, recording, replay buffer, virtual camera
-- 🔊 **Volume Sliders** — per audio source, in dB (-60 to 0)
-- 🔇 **Mute Switches** — per audio source
-- 👁️ **Source Visibility Toggles** — show/hide sources per scene
-- 📸 **Scene Preview** — live camera entity with screenshot of current scene
+- 🎬 **Streaming/Recording Control** — switches for stream, recording, replay buffer, virtual camera
+- 🔊 **Volume Sliders** — per audio source, in dB (-60 to 0) — *disabled by default, enable in entity registry*
+- 👁️ **Source Visibility Toggles** — show/hide sources per scene — *disabled by default, enable in entity registry*
+- 📸 **Scene Preview** — live image entity with screenshot of current scene
 - 📊 **Sensors** — current scene, streaming/recording/replay/virtualcam status, scene count
 - 🔌 **Event-Driven** — real-time updates via OBS WebSocket events (no polling)
 - 🎛️ **Services** — `set_scene`, `start_streaming`, `stop_streaming`, `start_recording`, `stop_recording`, `toggle_mute`
@@ -25,7 +28,7 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 ## Installation
 
 ### HACS (recommended)
-1. Add this repo as a Custom Repository in HACS
+1. Add this repo as a Custom Repository in HACS (category: Integration)
 2. Install "OBS Studio WebSocket"
 3. Restart Home Assistant
 
@@ -67,26 +70,17 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | Recording | Start/Stop recording |
 | Replay Buffer | Start/Stop replay buffer |
 | Virtual Camera | Start/Stop virtual cam |
-| Mute: {source} | Mute/unmute per audio source (auto-created) |
-| Visible: {source} ({scene}) | Show/hide source per scene (auto-created) |
+| Visible: {source} ({scene}) | Show/hide source per scene *(disabled by default)* |
 
 ### Number (Sliders)
 | Number | Description |
 |--------|-------------|
-| Volume: {source} | Volume in dB per audio source (auto-created, -60 to 0) |
+| Volume: {source} | Volume in dB per audio source *(disabled by default)* |
 
-### Camera
-| Camera | Description |
-|--------|-------------|
+### Image
+| Image | Description |
+|-------|-------------|
 | Scene Preview | Live screenshot of current scene (refreshes every 10s) |
-
-### Buttons
-| Button | Action |
-|--------|--------|
-| Start Stream | Start streaming |
-| Stop Stream | Stop streaming |
-| Start Recording | Start recording |
-| Stop Recording | Stop recording |
 
 ### Services
 | Service | Parameters | Description |
@@ -99,6 +93,8 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 | `obs_websocket.toggle_mute` | `source` (req), `entry_id` (opt) | Toggle mute on audio source |
 
 > **Multi-Instance:** `entry_id` is optional. If omitted, services apply to all or the first matching instance.
+
+> **Disabled Entities:** Volume sliders and source visibility switches are created with `entity_category=config` and disabled by default. Enable them in Settings → Integrations → OBS Studio → Entities as needed.
 
 ## Development
 
