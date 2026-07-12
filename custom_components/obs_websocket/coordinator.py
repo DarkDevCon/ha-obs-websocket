@@ -381,6 +381,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     @callback
     def _notify_update(self) -> None:
         """Notify entities of state update."""
+        self.async_update_listeners()
         async_dispatcher_send(self.hass, SIGNAL_OBS_UPDATE, self._entry_id)
 
     # === Control Methods ===
