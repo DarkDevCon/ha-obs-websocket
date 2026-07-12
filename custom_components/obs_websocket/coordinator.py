@@ -376,13 +376,19 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     def on_scene_list_changed(self, data) -> None:
         """Handle SceneListChanged event — trigger async refresh."""
-        self.hass.async_create_task(self._refresh_scenes())
-        self.hass.async_create_task(self._refresh_scene_items())
+        self.hass.loop.call_soon_threadsafe(
+            self.hass.async_create_task, self._refresh_scenes()
+        )
+        self.hass.loop.call_soon_threadsafe(
+            self.hass.async_create_task, self._refresh_scene_items()
+        )
         self._fire_event("SceneListChanged", data)
 
     def on_scene_item_enable_state_changed(self, data) -> None:
         """Handle SceneItemEnableStateChanged event — trigger async refresh."""
-        self.hass.async_create_task(self._refresh_scene_items())
+        self.hass.loop.call_soon_threadsafe(
+            self.hass.async_create_task, self._refresh_scene_items()
+        )
         self._fire_event("SceneItemEnableStateChanged", data)
 
     def on_input_mute_state_changed(self, data) -> None:
@@ -408,7 +414,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     def on_input_created(self, data) -> None:
         """Handle InputCreated event — refresh audio inputs."""
-        self.hass.async_create_task(self._refresh_audio_inputs())
+        self.hass.loop.call_soon_threadsafe(
+            self.hass.async_create_task, self._refresh_audio_inputs()
+        )
         self._fire_event("InputCreated", data)
 
     def on_input_removed(self, data) -> None:
@@ -420,9 +428,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._notify_update()
 
     def _fire_event(self, event_type: str, data) -> None:
-        """Fire an HA event with the OBS event data."""
-        # as_dataclass returns a class (type) with class-level attributes
-        # Convert to dict for the HA event
+        """Fire an HA event with the OBS event data.
+
+        Called from OBS WebSocket callback thread — schedule on event loop.
+        """
         try:
             if hasattr(data, "__dict__"):
                 event_data = {
@@ -435,16 +444,23 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         except Exception:
             event_data = {}
 
-        self.hass.bus.async_fire(
+        self.hass.loop.call_soon_threadsafe(
+            self.hass.bus.async_fire,
             EVENT_OBS_EVENT,
             {"event_type": event_type, "data": event_data, "entry_id": self._entry_id},
         )
 
     @callback
     def _notify_update(self) -> None:
-        """Notify entities of state update."""
+        """Notify entities of state update.
+
+        If called from the event loop (hass thread), send directly.
+        If called from OBS callback thread, schedule on event loop.
+        """
         self.async_update_listeners()
-        async_dispatcher_send(self.hass, SIGNAL_OBS_UPDATE, self._entry_id)
+        self.hass.loop.call_soon_threadsafe(
+            async_dispatcher_send, self.hass, SIGNAL_OBS_UPDATE, self._entry_id
+        )
 
     # === Control Methods ===
 
