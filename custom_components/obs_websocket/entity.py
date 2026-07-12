@@ -12,6 +12,8 @@ from .coordinator import OBSWebSocketCoordinator
 class OBSEntity(CoordinatorEntity):
     """Base entity for OBS WebSocket."""
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         coordinator: OBSWebSocketCoordinator,

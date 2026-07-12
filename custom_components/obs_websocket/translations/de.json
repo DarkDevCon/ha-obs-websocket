@@ -27,5 +27,62 @@
         }
       }
     }
+  },
+  "entity": {
+    "select": {
+      "scene_selector": {
+        "name": "Szene"
+      }
+    },
+    "number": {
+      "volume": {
+        "name": "Lautstärke: {source}"
+      }
+    },
+    "switch": {
+      "streaming": {
+        "name": "Streaming"
+      },
+      "recording": {
+        "name": "Aufnahme"
+      },
+      "replay_buffer": {
+        "name": "Replay Buffer"
+      },
+      "virtualcam": {
+        "name": "Virtuelle Kamera"
+      },
+      "mute": {
+        "name": "Stumm: {source}"
+      },
+      "scene_item_visibility": {
+        "name": "Sichtbar: {source} ({scene})"
+      }
+    },
+    "sensor": {
+      "current_scene": {
+        "name": "Aktuelle Szene"
+      },
+      "streaming": {
+        "name": "Streaming"
+      },
+      "recording": {
+        "name": "Aufnahme"
+      },
+      "replay_buffer": {
+        "name": "Replay Buffer"
+      },
+      "virtualcam": {
+        "name": "Virtuelle Kamera"
+      },
+      "scene_count": {
+        "name": "Szenenanzahl"
+      }
+    },
+    "camera": {
+      "scene_preview": {
+        "name": "Szenen-Vorschau"
+      }
+    }
   }
 }

@@ -73,7 +73,8 @@ class OBSVolumeSlider(OBSEntity, NumberEntity):
     ) -> None:
         description = EntityDescription(
             key=f"volume_{source_name}",
-            name=f"Volume: {source_name}",
+            translation_key="volume",
+            translation_placeholders={"source": source_name},
             icon="mdi:volume-high",
         )
         super().__init__(coordinator, entry_id, description)

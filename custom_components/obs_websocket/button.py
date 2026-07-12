@@ -27,25 +27,25 @@ class OBSButtonEntityDescription(ButtonEntityDescription):
 BUTTONS: tuple[OBSButtonEntityDescription, ...] = (
     OBSButtonEntityDescription(
         key="start_stream",
-        name="Start Stream",
+        translation_key="start_stream",
         icon="mdi:cast",
         action_fn="start_streaming",
     ),
     OBSButtonEntityDescription(
         key="stop_stream",
-        name="Stop Stream",
+        translation_key="stop_stream",
         icon="mdi:cast-off",
         action_fn="stop_streaming",
     ),
     OBSButtonEntityDescription(
         key="start_recording",
-        name="Start Recording",
+        translation_key="start_recording",
         icon="mdi:record-rec",
         action_fn="start_recording",
     ),
     OBSButtonEntityDescription(
         key="stop_recording",
-        name="Stop Recording",
+        translation_key="stop_recording",
         icon="mdi:stop",
         action_fn="stop_recording",
     ),

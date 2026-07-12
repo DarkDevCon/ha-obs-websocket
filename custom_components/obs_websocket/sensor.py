@@ -29,32 +29,32 @@ class OBSSensorEntityDescription(SensorEntityDescription):
 SENSORS: tuple[OBSSensorEntityDescription, ...] = (
     OBSSensorEntityDescription(
         key="current_scene",
-        name="Current Scene",
+        translation_key="current_scene",
         icon="mdi:movie-open",
     ),
     OBSSensorEntityDescription(
         key="streaming",
-        name="Streaming",
+        translation_key="streaming",
         icon="mdi:cast",
     ),
     OBSSensorEntityDescription(
         key="recording",
-        name="Recording",
+        translation_key="recording",
         icon="mdi:record-rec",
     ),
     OBSSensorEntityDescription(
         key="replay_buffer",
-        name="Replay Buffer",
+        translation_key="replay_buffer",
         icon="mdi:history",
     ),
     OBSSensorEntityDescription(
         key="virtualcam",
-        name="Virtual Camera",
+        translation_key="virtualcam",
         icon="mdi:camera",
     ),
     OBSSensorEntityDescription(
         key="scene_count",
-        name="Scene Count",
+        translation_key="scene_count",
         icon="mdi:view-dashboard",
         state_class=SensorStateClass.MEASUREMENT,
     ),

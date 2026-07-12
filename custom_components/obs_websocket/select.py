@@ -36,7 +36,7 @@ class OBSSceneSelect(OBSEntity, SelectEntity):
         from homeassistant.helpers.entity import EntityDescription
         description = EntityDescription(
             key="scene_selector",
-            name="Scene",
+            translation_key="scene_selector",
             icon="mdi:movie-open",
         )
         super().__init__(coordinator, entry_id, description)

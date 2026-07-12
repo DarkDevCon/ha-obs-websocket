@@ -27,5 +27,62 @@
         }
       }
     }
+  },
+  "entity": {
+    "select": {
+      "scene_selector": {
+        "name": "Scene"
+      }
+    },
+    "number": {
+      "volume": {
+        "name": "Volume: {source}"
+      }
+    },
+    "switch": {
+      "streaming": {
+        "name": "Streaming"
+      },
+      "recording": {
+        "name": "Recording"
+      },
+      "replay_buffer": {
+        "name": "Replay Buffer"
+      },
+      "virtualcam": {
+        "name": "Virtual Camera"
+      },
+      "mute": {
+        "name": "Mute: {source}"
+      },
+      "scene_item_visibility": {
+        "name": "Visible: {source} ({scene})"
+      }
+    },
+    "sensor": {
+      "current_scene": {
+        "name": "Current Scene"
+      },
+      "streaming": {
+        "name": "Streaming"
+      },
+      "recording": {
+        "name": "Recording"
+      },
+      "replay_buffer": {
+        "name": "Replay Buffer"
+      },
+      "virtualcam": {
+        "name": "Virtual Camera"
+      },
+      "scene_count": {
+        "name": "Scene Count"
+      }
+    },
+    "camera": {
+      "scene_preview": {
+        "name": "Scene Preview"
+      }
+    }
   }
 }

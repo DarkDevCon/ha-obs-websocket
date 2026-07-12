@@ -41,7 +41,7 @@ class OBSScenePreview(OBSEntity, Camera):
     ) -> None:
         description = EntityDescription(
             key="scene_preview",
-            name="Scene Preview",
+            translation_key="scene_preview",
             icon="mdi:eye",
         )
         super().__init__(coordinator, entry_id, description)

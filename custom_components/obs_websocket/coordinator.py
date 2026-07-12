@@ -153,40 +153,62 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         _LOGGER.info("Disconnected from OBS WebSocket")
 
     async def _refresh_state(self) -> None:
-        """Refresh all state from OBS."""
+        """Refresh all state from OBS.
+
+        Each section is independent so a failure in one call
+        (e.g. get_stream_status) does not prevent others
+        (e.g. audio inputs / scenes) from being populated.
+        """
         if not self._client:
             return
 
+        # Current scene
         try:
-            # Current scene
             scene = await self.hass.async_add_executor_job(
                 self._client.get_current_program_scene
             )
-            # as_dataclass converts top-level keys to snake_case attributes
-            self._scene = scene.scene_name if scene else None
+            self._scene = scene.current_program_scene_name if scene else None
+        except Exception as err:
+            _LOGGER.error("Error getting current scene: %s", err)
 
-            # Streaming / Recording / Replay / VirtualCam status
+        # Streaming status
+        try:
             status = await self.hass.async_add_executor_job(
                 self._client.get_stream_status
             )
             self._streaming = bool(status.output_active) if status else False
+        except Exception as err:
+            _LOGGER.error("Error getting stream status: %s", err)
 
+        # Recording status
+        try:
             rec = await self.hass.async_add_executor_job(
                 self._client.get_record_status
             )
             self._recording = bool(rec.output_active) if rec else False
+        except Exception as err:
+            _LOGGER.error("Error getting record status: %s", err)
 
+        # Replay buffer status
+        try:
             replay = await self.hass.async_add_executor_job(
                 self._client.get_replay_buffer_status
             )
             self._replay_buffer = bool(replay.output_active) if replay else False
+        except Exception as err:
+            _LOGGER.error("Error getting replay buffer status: %s", err)
 
+        # Virtual camera status
+        try:
             vcam = await self.hass.async_add_executor_job(
                 self._client.get_virtual_cam_status
             )
             self._virtualcam = bool(vcam.output_active) if vcam else False
+        except Exception as err:
+            _LOGGER.error("Error getting virtual cam status: %s", err)
 
-            # Scenes list
+        # Scenes list
+        try:
             scenes_resp = await self.hass.async_add_executor_job(
                 self._client.get_scene_list
             )
@@ -195,15 +217,14 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                 self._scenes = [s["sceneName"] for s in scenes_resp.scenes]
             else:
                 self._scenes = []
-
-            # Audio inputs
-            await self._refresh_audio_inputs()
-
-            # Scene item visibility
-            await self._refresh_scene_items()
-
         except Exception as err:
-            _LOGGER.error("Error refreshing OBS state: %s", err)
+            _LOGGER.error("Error getting scene list: %s", err)
+
+        # Audio inputs
+        await self._refresh_audio_inputs()
+
+        # Scene item visibility
+        await self._refresh_scene_items()
 
         self._notify_update()
 
@@ -215,10 +236,16 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             inputs = await self.hass.async_add_executor_job(
                 self._client.get_input_list
             )
-            new_inputs: dict[str, dict] = {}
             # inputs.inputs is a list of raw dicts with camelCase keys
-            for inp in (inputs.inputs if inputs else []):
-                name = inp["inputName"]
+            raw_inputs = inputs.inputs if inputs and hasattr(inputs, "inputs") else []
+            if not raw_inputs and inputs:
+                # Fallback: maybe it's a dict-like with "inputs" key
+                raw_inputs = inputs.get("inputs", []) if hasattr(inputs, "get") else []
+            new_inputs: dict[str, dict] = {}
+            for inp in raw_inputs:
+                name = inp.get("inputName") if isinstance(inp, dict) else None
+                if not name:
+                    continue
                 try:
                     mute_resp = await self.hass.async_add_executor_job(
                         self._client.get_input_mute, name
@@ -235,12 +262,15 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                     vol_db = 0.0
                 new_inputs[name] = {"muted": muted, "volume_db": vol_db}
             self._audio_inputs = new_inputs
+            _LOGGER.debug("Refreshed audio inputs: %s", list(new_inputs.keys()))
         except Exception as err:
-            _LOGGER.debug("Could not refresh audio inputs: %s", err)
+            _LOGGER.error("Could not refresh audio inputs: %s", err)
 
     async def _refresh_scene_items(self) -> None:
         """Refresh scene item visibility for all scenes."""
         if not self._client:
+            return
+        if not self._scenes:
             return
         try:
             new_scene_items: dict[str, dict[str, bool]] = {}
@@ -251,17 +281,22 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                     )
                     scene_vis: dict[str, bool] = {}
                     # scene_items is a list of raw dicts with camelCase keys
-                    for item in (items.scene_items if items else []):
+                    raw_items = items.scene_items if items and hasattr(items, "scene_items") else []
+                    if not raw_items and items:
+                        raw_items = items.get("scene_items", []) if hasattr(items, "get") else []
+                    for item in raw_items:
+                        if not isinstance(item, dict):
+                            continue
                         source_name = item.get("sourceName", "")
                         visible = item.get("sceneItemVisible", True)
                         if source_name:
                             scene_vis[source_name] = visible
                     new_scene_items[scene_name] = scene_vis
-                except Exception:
-                    pass
+                except Exception as err:
+                    _LOGGER.debug("Could not get scene items for %s: %s", scene_name, err)
             self._scene_items = new_scene_items
         except Exception as err:
-            _LOGGER.debug("Could not refresh scene items: %s", err)
+            _LOGGER.error("Could not refresh scene items: %s", err)
 
     async def _refresh_scenes(self) -> None:
         if not self._client:
@@ -274,8 +309,8 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                 self._scenes = [s["sceneName"] for s in scenes_resp.scenes]
             else:
                 self._scenes = []
-        except Exception:
-            pass
+        except Exception as err:
+            _LOGGER.error("Error refreshing scenes: %s", err)
         self._notify_update()
 
     # === Event Callbacks ===

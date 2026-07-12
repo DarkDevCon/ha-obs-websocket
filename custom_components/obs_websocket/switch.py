@@ -31,7 +31,7 @@ class OBSSwitchEntityDescription(SwitchEntityDescription):
 SWITCHES: tuple[OBSSwitchEntityDescription, ...] = (
     OBSSwitchEntityDescription(
         key="streaming",
-        name="Streaming",
+        translation_key="streaming",
         icon="mdi:cast",
         turn_on_fn="start_streaming",
         turn_off_fn="stop_streaming",
@@ -39,7 +39,7 @@ SWITCHES: tuple[OBSSwitchEntityDescription, ...] = (
     ),
     OBSSwitchEntityDescription(
         key="recording",
-        name="Recording",
+        translation_key="recording",
         icon="mdi:record-rec",
         turn_on_fn="start_recording",
         turn_off_fn="stop_recording",
@@ -47,7 +47,7 @@ SWITCHES: tuple[OBSSwitchEntityDescription, ...] = (
     ),
     OBSSwitchEntityDescription(
         key="replay_buffer",
-        name="Replay Buffer",
+        translation_key="replay_buffer",
         icon="mdi:history",
         turn_on_fn="start_replay_buffer",
         turn_off_fn="stop_replay_buffer",
@@ -55,7 +55,7 @@ SWITCHES: tuple[OBSSwitchEntityDescription, ...] = (
     ),
     OBSSwitchEntityDescription(
         key="virtualcam",
-        name="Virtual Camera",
+        translation_key="virtualcam",
         icon="mdi:camera",
         turn_on_fn="start_virtualcam",
         turn_off_fn="stop_virtualcam",
@@ -173,7 +173,8 @@ class OBSMuteSwitch(OBSEntity, SwitchEntity):
     ) -> None:
         description = EntityDescription(
             key=f"mute_{source_name}",
-            name=f"Mute: {source_name}",
+            translation_key="mute",
+            translation_placeholders={"source": source_name},
             icon="mdi:volume-mute",
         )
         super().__init__(coordinator, entry_id, description)
@@ -211,7 +212,8 @@ class OBSSceneItemVisibilitySwitch(OBSEntity, SwitchEntity):
     ) -> None:
         description = EntityDescription(
             key=f"visibility_{scene_name}_{source_name}",
-            name=f"Visible: {source_name} ({scene_name})",
+            translation_key="scene_item_visibility",
+            translation_placeholders={"source": source_name, "scene": scene_name},
             icon="mdi:eye",
         )
         super().__init__(coordinator, entry_id, description)
