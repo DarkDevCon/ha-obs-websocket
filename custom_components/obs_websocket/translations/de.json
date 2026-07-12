@@ -7,7 +7,7 @@
         "data": {
           "host": "Host (IP-Adresse)",
           "port": "Port",
-          "password": "WebSocket-Passwort"
+          "password": "WebSocket Passwort"
         }
       }
     },
@@ -74,6 +74,48 @@
       },
       "scene_count": {
         "name": "Szenenanzahl"
+      },
+      "stream_bytes": {
+        "name": "Stream gesendete Bytes"
+      },
+      "stream_duration": {
+        "name": "Stream Dauer"
+      },
+      "stream_skipped_frames": {
+        "name": "Stream verworfene Frames"
+      },
+      "stream_total_frames": {
+        "name": "Stream gesamte Frames"
+      },
+      "stream_dropped_frames_pct": {
+        "name": "Stream verworfene Frames %"
+      },
+      "stream_congestion": {
+        "name": "Stream Congestion"
+      },
+      "active_fps": {
+        "name": "Aktive FPS"
+      },
+      "cpu_usage": {
+        "name": "CPU-Auslastung"
+      },
+      "memory_usage": {
+        "name": "Speichernutzung"
+      },
+      "render_skipped_frames": {
+        "name": "Render übersprungene Frames"
+      },
+      "render_total_frames": {
+        "name": "Render gesamte Frames"
+      },
+      "render_missed_frames": {
+        "name": "Render verpasste Frames"
+      },
+      "avg_frame_render_time": {
+        "name": "Ø Frame-Render-Zeit"
+      },
+      "available_disk_space": {
+        "name": "Verfügbarer Speicherplatz"
       }
     },
     "image": {

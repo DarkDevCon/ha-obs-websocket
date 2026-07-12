@@ -74,6 +74,48 @@
       },
       "scene_count": {
         "name": "Scene Count"
+      },
+      "stream_bytes": {
+        "name": "Stream Bytes Sent"
+      },
+      "stream_duration": {
+        "name": "Stream Duration"
+      },
+      "stream_skipped_frames": {
+        "name": "Stream Skipped Frames"
+      },
+      "stream_total_frames": {
+        "name": "Stream Total Frames"
+      },
+      "stream_dropped_frames_pct": {
+        "name": "Stream Dropped Frames %"
+      },
+      "stream_congestion": {
+        "name": "Stream Congestion"
+      },
+      "active_fps": {
+        "name": "Active FPS"
+      },
+      "cpu_usage": {
+        "name": "CPU Usage"
+      },
+      "memory_usage": {
+        "name": "Memory Usage"
+      },
+      "render_skipped_frames": {
+        "name": "Render Skipped Frames"
+      },
+      "render_total_frames": {
+        "name": "Render Total Frames"
+      },
+      "render_missed_frames": {
+        "name": "Render Missed Frames"
+      },
+      "avg_frame_render_time": {
+        "name": "Avg Frame Render Time"
+      },
+      "available_disk_space": {
+        "name": "Available Disk Space"
       }
     },
     "image": {

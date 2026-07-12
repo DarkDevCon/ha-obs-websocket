@@ -1,6 +1,7 @@
 """OBS WebSocket Coordinator — manages connection and state."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import Any
@@ -8,10 +9,15 @@ from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.const import UnitOfDataRate, UnitOfInformation
 
 from .const import DOMAIN, EVENT_OBS_EVENT
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Polling interval for stream/system stats (OBS doesn't push these as events)
+STATS_POLL_INTERVAL = 10  # seconds
 
 
 def _b64decode_safe(b64: str) -> bytes:
@@ -74,6 +80,28 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         # Scene item visibility: {scene_name: {source_name: bool}}
         self._scene_items: dict[str, dict[str, bool]] = {}
 
+        # Stream stats
+        self._stream_bytes: int = 0
+        self._stream_duration: int = 0  # milliseconds
+        self._stream_skipped_frames: int = 0
+        self._stream_total_frames: int = 0
+        self._stream_congestion: float = 0.0
+        self._stream_reconnecting: bool = False
+
+        # System stats (GetStats)
+        self._cpu_usage: float = 0.0
+        self._memory_usage: float = 0.0  # MB
+        self._active_fps: float = 0.0
+        self._render_skipped_frames: int = 0
+        self._render_total_frames: int = 0
+        self._available_disk_space: float = 0.0  # MB
+        self._avg_frame_render_time: float = 0.0  # ms
+        self._render_missed_frames: int = 0
+
+        # Stats polling task
+        self._stats_task: asyncio.Task | None = None
+
+
     @property
     def host(self) -> str:
         return self._host
@@ -109,6 +137,66 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     @property
     def scene_items(self) -> dict[str, dict[str, bool]]:
         return self._scene_items
+
+    # === Stream Stats ===
+
+    @property
+    def stream_bytes(self) -> int:
+        return self._stream_bytes
+
+    @property
+    def stream_duration(self) -> int:
+        return self._stream_duration
+
+    @property
+    def stream_skipped_frames(self) -> int:
+        return self._stream_skipped_frames
+
+    @property
+    def stream_total_frames(self) -> int:
+        return self._stream_total_frames
+
+    @property
+    def stream_congestion(self) -> float:
+        return self._stream_congestion
+
+    @property
+    def stream_reconnecting(self) -> bool:
+        return self._stream_reconnecting
+
+    # === System Stats ===
+
+    @property
+    def cpu_usage(self) -> float:
+        return self._cpu_usage
+
+    @property
+    def memory_usage(self) -> float:
+        return self._memory_usage
+
+    @property
+    def active_fps(self) -> float:
+        return self._active_fps
+
+    @property
+    def render_skipped_frames(self) -> int:
+        return self._render_skipped_frames
+
+    @property
+    def render_total_frames(self) -> int:
+        return self._render_total_frames
+
+    @property
+    def available_disk_space(self) -> float:
+        return self._available_disk_space
+
+    @property
+    def avg_frame_render_time(self) -> float:
+        return self._avg_frame_render_time
+
+    @property
+    def render_missed_frames(self) -> int:
+        return self._render_missed_frames
 
     async def async_connect(self, skip_initial_refresh: bool = False) -> None:
         """Connect to OBS WebSocket."""
@@ -156,8 +244,18 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         _LOGGER.info("Connected to OBS WebSocket at %s:%s", self._host, self._port)
 
+        # Start stats polling (OBS doesn't push stats as events)
+        self._stats_task = self.hass.async_create_background_task(
+            self._stats_loop(), "obs_stats_poll"
+        )
+
     async def async_disconnect(self) -> None:
         """Disconnect from OBS WebSocket."""
+        # Stop stats polling
+        if self._stats_task:
+            self._stats_task.cancel()
+            self._stats_task = None
+
         if self._event_client:
             try:
                 await self.hass.async_add_executor_job(self._event_client.disconnect)
@@ -370,6 +468,60 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error refreshing scenes: %s", err)
         self._notify_update()
+
+    async def _stats_loop(self) -> None:
+        """Poll OBS for stream and system stats every STATS_POLL_INTERVAL seconds."""
+        while True:
+            try:
+                await asyncio.sleep(STATS_POLL_INTERVAL)
+                await self._refresh_stream_stats()
+                await self._refresh_system_stats()
+                self._notify_update()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                _LOGGER.debug("Stats poll error: %s", err)
+
+    async def _refresh_stream_stats(self) -> None:
+        """Refresh stream statistics from OBS GetStreamStatus."""
+        if not self._client:
+            return
+        try:
+            status = await self.hass.async_add_executor_job(
+                self._client.get_stream_status
+            )
+            if not status:
+                return
+            self._streaming = bool(status.output_active)
+            self._stream_bytes = status.output_bytes or 0
+            self._stream_duration = status.output_duration or 0
+            self._stream_congestion = status.output_congestion or 0.0
+            self._stream_reconnecting = bool(status.output_reconnecting)
+            self._stream_skipped_frames = status.output_skipped_frames or 0
+            self._stream_total_frames = status.output_total_frames or 0
+        except Exception as err:
+            _LOGGER.debug("Could not refresh stream stats: %s", err)
+
+    async def _refresh_system_stats(self) -> None:
+        """Refresh system statistics from OBS GetStats."""
+        if not self._client:
+            return
+        try:
+            stats = await self.hass.async_add_executor_job(
+                self._client.get_stats
+            )
+            if not stats:
+                return
+            self._cpu_usage = stats.cpu_usage or 0.0
+            self._memory_usage = stats.memory_usage or 0.0
+            self._active_fps = stats.active_fps or 0.0
+            self._render_skipped_frames = stats.render_skipped_frames or 0
+            self._render_total_frames = stats.render_total_frames or 0
+            self._available_disk_space = stats.available_disk_space or 0.0
+            self._avg_frame_render_time = stats.average_frame_render_time or 0.0
+            self._render_missed_frames = stats.render_missed_frames or 0
+        except Exception as err:
+            _LOGGER.debug("Could not refresh system stats: %s", err)
 
     # === Event Callbacks ===
     # obsws-python Callback.trigger() calls functions named on_{snake_case(event)}.
