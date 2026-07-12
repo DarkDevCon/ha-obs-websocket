@@ -465,7 +465,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         If called from the event loop (hass thread), send directly.
         If called from OBS callback thread, schedule on event loop.
         """
-        self.async_update_listeners()
+        self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
         self.hass.loop.call_soon_threadsafe(
             async_dispatcher_send, self.hass, SIGNAL_OBS_UPDATE, self._entry_id
         )
