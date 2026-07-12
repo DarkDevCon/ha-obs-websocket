@@ -95,11 +95,12 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         # ReqClient and EventClient constructors do blocking I/O (WebSocket connect + auth)
         self._client = await self.hass.async_add_executor_job(
-            obs.ReqClient,
-            self._host,
-            self._port,
-            self._password or "",
-            10,  # timeout
+            lambda: obs.ReqClient(
+                host=self._host,
+                port=self._port,
+                password=self._password or "",
+                timeout=10,
+            )
         )
 
         # Get initial state
@@ -107,11 +108,12 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         # EventClient auto-connects and starts listening in __init__
         self._event_client = await self.hass.async_add_executor_job(
-            obs.EventClient,
-            self._host,
-            self._port,
-            self._password or "",
-            10,  # timeout
+            lambda: obs.EventClient(
+                host=self._host,
+                port=self._port,
+                password=self._password or "",
+                timeout=10,
+            )
         )
 
         self._event_client.callback.register(

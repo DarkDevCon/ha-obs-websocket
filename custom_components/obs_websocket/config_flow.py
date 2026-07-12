@@ -31,11 +31,12 @@ async def _test_connection(
 
         # ReqClient constructor does blocking I/O — run in executor
         client = await hass.async_add_executor_job(
-            obs.ReqClient,
-            host,
-            port,
-            password or "",
-            5,  # timeout
+            lambda: obs.ReqClient(
+                host=host,
+                port=port,
+                password=password or "",
+                timeout=5,
+            )
         )
         await hass.async_add_executor_job(client.get_version)
         await hass.async_add_executor_job(client.disconnect)
