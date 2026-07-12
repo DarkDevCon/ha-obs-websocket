@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OBS Studio WebSocket",
+        "description": "Verbindung zu OBS Studio über WebSocket herstellen.",
+        "data": {
+          "host": "Host (IP-Adresse)",
+          "port": "Port",
+          "password": "Passwort (leer lassen, wenn kein Passwort gesetzt)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu OBS WebSocket fehlgeschlagen. Host, Port und Passwort prüfen."
+    },
+    "abort": {
+      "already_configured": "Diese OBS-Instanz ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OBS Studio WebSocket Optionen",
+        "data": {
+          "password": "Passwort"
+        }
+      }
+    }
+  }
+}

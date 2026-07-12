@@ -1,0 +1,39 @@
+set_scene:
+  name: Set Scene
+  description: Switch to a specific scene in OBS Studio.
+  fields:
+    scene:
+      name: Scene
+      description: The name of the scene to switch to.
+      required: true
+      example: "Scene 1"
+      selector:
+        text:
+
+start_streaming:
+  name: Start Streaming
+  description: Start streaming in OBS Studio.
+
+stop_streaming:
+  name: Stop Streaming
+  description: Stop streaming in OBS Studio.
+
+start_recording:
+  name: Start Recording
+  description: Start recording in OBS Studio.
+
+stop_recording:
+  name: Stop Recording
+  description: Stop recording in OBS Studio.
+
+toggle_mute:
+  name: Toggle Mute
+  description: Toggle mute on an audio source.
+  fields:
+    source:
+      name: Source
+      description: The name of the audio source to toggle mute.
+      required: true
+      example: "Microphone"
+      selector:
+        text:
