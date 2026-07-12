@@ -78,6 +78,7 @@ class OBSWebSocketConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+            description_placeholders={"password": "Your OBS WebSocket password"},
         )
 
     @staticmethod
@@ -132,12 +133,13 @@ class OBSWebSocketOptionsFlow(config_entries.OptionsFlow):
         )
 
     def _build_options_schema(self) -> vol.Schema:
-        """Build the options schema."""
+        """Build the options schema.
+
+        Password field is left empty — user enters a new password
+        to replace the existing one. Leave blank to keep current.
+        """
         return vol.Schema(
             {
-                vol.Optional(
-                    CONF_PASSWORD,
-                    default=self._config_entry.data.get(CONF_PASSWORD, ""),
-                ): str,
+                vol.Optional(CONF_PASSWORD): str,
             }
         )

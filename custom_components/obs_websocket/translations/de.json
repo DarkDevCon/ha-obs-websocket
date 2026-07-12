@@ -7,7 +7,7 @@
         "data": {
           "host": "Host (IP-Adresse)",
           "port": "Port",
-          "password": "***)"
+          "password": "WebSocket-Passwort"
         }
       }
     },
@@ -23,7 +23,7 @@
       "init": {
         "title": "OBS Studio WebSocket Optionen",
         "data": {
-          "password": "***"
+          "password": "Neues Passwort (leer lassen für aktuelles)"
         }
       }
     }
