@@ -6,7 +6,7 @@ import logging
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityDescription, EntityCategory
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -29,8 +29,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up OBS WebSocket number entities (volume sliders).
 
-    Volume sliders are created with entity_category=config so they are
-    disabled by default in HA. Users can enable them in the entity registry.
+    Volume sliders are disabled by default (hidden in HA UI).
+    Enable them in Settings → Integrations → OBS → Entities.
     """
     coordinator: OBSWebSocketCoordinator = hass.data[DOMAIN][entry.entry_id]
 
@@ -63,11 +63,10 @@ async def async_setup_entry(
 class OBSVolumeSlider(OBSEntity, NumberEntity):
     """OBS WebSocket audio volume slider.
 
-    Disabled by default via entity_category=config.
-    Enable in HA entity registry to use.
+    Hidden by default. Enable in HA entity registry to use.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,

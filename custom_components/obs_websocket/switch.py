@@ -10,7 +10,7 @@ from homeassistant.components.switch import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityDescription, EntityCategory
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -146,11 +146,10 @@ class OBSSwitch(OBSEntity, SwitchEntity):
 class OBSSceneItemVisibilitySwitch(OBSEntity, SwitchEntity):
     """OBS WebSocket visibility toggle for a source within a scene.
 
-    Disabled by default via entity_category=config.
-    Enable in HA entity registry to use.
+    Hidden by default. Enable in HA entity registry to use.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
