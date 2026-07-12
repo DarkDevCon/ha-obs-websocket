@@ -189,14 +189,15 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error getting record status: %s", err)
 
-        # Replay buffer status
+        # Replay buffer status (not all OBS setups have replay buffer enabled)
         try:
             replay = await self.hass.async_add_executor_job(
                 self._client.get_replay_buffer_status
             )
             self._replay_buffer = bool(replay.output_active) if replay else False
-        except Exception as err:
-            _LOGGER.error("Error getting replay buffer status: %s", err)
+        except Exception:
+            _LOGGER.debug("Replay buffer not available, skipping")
+            self._replay_buffer = False
 
         # Virtual camera status (not all OBS setups have virtual cam)
         try:
