@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.const import UnitOfTime, PERCENTAGE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -74,6 +75,7 @@ SENSORS: tuple[OBSSensorEntityDescription, ...] = (
         icon="mdi:timer",
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
     ),
     OBSSensorEntityDescription(
         key="stream_skipped_frames",
@@ -92,6 +94,7 @@ SENSORS: tuple[OBSSensorEntityDescription, ...] = (
         translation_key="stream_dropped_frames_pct",
         icon="mdi:percent",
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
         suggested_display_precision=1,
     ),
     OBSSensorEntityDescription(
@@ -107,6 +110,7 @@ SENSORS: tuple[OBSSensorEntityDescription, ...] = (
         translation_key="active_fps",
         icon="mdi:speedometer",
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="fps",
         suggested_display_precision=1,
     ),
     OBSSensorEntityDescription(
@@ -114,6 +118,7 @@ SENSORS: tuple[OBSSensorEntityDescription, ...] = (
         translation_key="cpu_usage",
         icon="mdi:cpu-64-bit",
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
         suggested_display_precision=1,
     ),
     OBSSensorEntityDescription(
@@ -146,7 +151,9 @@ SENSORS: tuple[OBSSensorEntityDescription, ...] = (
         key="avg_frame_render_time",
         translation_key="avg_frame_render_time",
         icon="mdi:timer-sand",
+        device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         suggested_display_precision=2,
     ),
     OBSSensorEntityDescription(
