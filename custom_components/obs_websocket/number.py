@@ -19,9 +19,9 @@ from .entity import OBSEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-# OBS volume range in dB (typical: -60 to 0)
+# OBS volume range in dB (-60 to +30, step 0.5)
 VOLUME_MIN = -60.0
-VOLUME_MAX = 0.0
+VOLUME_MAX = 30.0
 VOLUME_STEP = 0.5
 
 
