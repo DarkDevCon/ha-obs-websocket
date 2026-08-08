@@ -75,7 +75,7 @@ Home Assistant custom integration for OBS Studio via WebSocket.
 ### Number (Volume Sliders)
 | Entity | Description |
 |--------|-------------|
-| Volume: {source} | Volume in dB per audio source (-60 to 0, step 0.5) *(disabled by default)* |
+| Volume: {source} | Volume in dB per audio source (-60 to 30, step 0.5) *(disabled by default)* |
 
 > Volume values are rounded to 1 decimal place for clean display.
 
