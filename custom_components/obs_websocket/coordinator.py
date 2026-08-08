@@ -693,7 +693,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     async def set_input_volume(self, source: str, volume_db: float) -> None:
         await self.hass.async_add_executor_job(
-            self._client.set_input_volume, source, None, volume_db
+            self._client.set_input_volume, source, vol_db=volume_db
         )
 
     async def set_scene_item_enabled(self, scene_name: str, source_name: str, enabled: bool) -> None:
