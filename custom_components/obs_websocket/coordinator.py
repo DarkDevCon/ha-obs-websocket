@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import socket
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.const import UnitOfDataRate, UnitOfInformation
@@ -18,6 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Polling interval for stream/system stats (OBS doesn't push these as events)
 STATS_POLL_INTERVAL = 10  # seconds
+RECONNECT_INTERVAL = 10  # seconds
 
 
 def _b64decode_safe(b64: str) -> bytes:
@@ -100,6 +103,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
         # Stats polling task
         self._stats_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
 
 
     @property
@@ -248,10 +252,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._stats_task = self.hass.async_create_background_task(
             self._stats_loop(), "obs_stats_poll"
         )
+        self.last_update_success = True
 
-    async def async_disconnect(self) -> None:
-        """Disconnect from OBS WebSocket."""
-        # Stop stats polling
+    async def _cleanup_clients(self) -> None:
+        """Tear down client objects without logging noisy disconnect errors."""
         if self._stats_task:
             self._stats_task.cancel()
             self._stats_task = None
@@ -269,6 +273,121 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             except Exception:
                 pass
             self._client = None
+
+    def _is_connection_error(self, err: Exception) -> bool:
+        """Return True when an exception indicates a broken OBS connection."""
+        if isinstance(
+            err,
+            (
+                BrokenPipeError,
+                ConnectionError,
+                ConnectionResetError,
+                socket.timeout,
+                TimeoutError,
+                OSError,
+            ),
+        ):
+            return True
+
+        message = str(err).lower()
+        return any(
+            text in message
+            for text in (
+                "broken pipe",
+                "connection refused",
+                "connection reset",
+                "timed out",
+                "socket is already closed",
+                "connection is already closed",
+                "not connected",
+                "failed to connect",
+            )
+        )
+
+    def _schedule_reconnect(self) -> None:
+        """Start reconnect loop if none is running."""
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._reconnect_task = self.hass.async_create_background_task(
+            self._async_reconnect_loop(), "obs_reconnect"
+        )
+
+    async def _handle_connection_loss(self, context: str, err: Exception) -> None:
+        """Mark coordinator disconnected and trigger reconnect attempts."""
+        _LOGGER.warning(
+            "Lost OBS WebSocket connection to %s:%s during %s: %s",
+            self._host,
+            self._port,
+            context,
+            err,
+        )
+        await self._cleanup_clients()
+        self.last_update_success = False
+        self._stream_reconnecting = False
+        self._notify_update()
+        self._schedule_reconnect()
+
+    async def _async_reconnect_loop(self) -> None:
+        """Reconnect to OBS until successful or unloaded."""
+        try:
+            while True:
+                try:
+                    _LOGGER.info(
+                        "Attempting OBS WebSocket reconnect to %s:%s",
+                        self._host,
+                        self._port,
+                    )
+                    await self.async_connect(skip_initial_refresh=True)
+                    await self._refresh_state()
+                    self.last_update_success = True
+                    self._notify_update()
+                    _LOGGER.info(
+                        "Reconnected to OBS WebSocket at %s:%s",
+                        self._host,
+                        self._port,
+                    )
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    await self._cleanup_clients()
+                    self.last_update_success = False
+                    self._notify_update()
+                    _LOGGER.warning(
+                        "OBS WebSocket reconnect to %s:%s failed: %s",
+                        self._host,
+                        self._port,
+                        err,
+                    )
+                    await asyncio.sleep(RECONNECT_INTERVAL)
+        finally:
+            self._reconnect_task = None
+
+    async def _async_control_call(self, action: str, func, *args):
+        """Execute an OBS control call with friendly HA errors."""
+        if not self._client:
+            self._schedule_reconnect()
+            raise HomeAssistantError(
+                f"OBS Studio at {self._host}:{self._port} is disconnected. Reconnect was scheduled."
+            )
+
+        try:
+            return await self.hass.async_add_executor_job(func, *args)
+        except Exception as err:
+            if self._is_connection_error(err):
+                await self._handle_connection_loss(action, err)
+                raise HomeAssistantError(
+                    f"OBS Studio at {self._host}:{self._port} is disconnected. Reconnect was scheduled."
+                ) from err
+            raise HomeAssistantError(f"OBS action '{action}' failed: {err}") from err
+
+    async def async_disconnect(self) -> None:
+        """Disconnect from OBS WebSocket."""
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
+
+        await self._cleanup_clients()
 
         _LOGGER.info("Disconnected from OBS WebSocket")
 
@@ -293,6 +412,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             self._scene = scene.current_program_scene_name if scene else None
         except Exception as err:
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing current scene", err)
+                return
             _LOGGER.error("Error getting current scene: %s", err)
 
         # Streaming status
@@ -302,6 +424,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             self._streaming = bool(status.output_active) if status else False
         except Exception as err:
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing stream status", err)
+                return
             _LOGGER.error("Error getting stream status: %s", err)
 
         # Recording status
@@ -311,6 +436,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             self._recording = bool(rec.output_active) if rec else False
         except Exception as err:
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing record status", err)
+                return
             _LOGGER.error("Error getting record status: %s", err)
 
         # Replay buffer status (not all OBS setups have replay buffer enabled)
@@ -344,6 +472,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             else:
                 self._scenes = []
         except Exception as err:
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing scene list", err)
+                return
             _LOGGER.error("Error getting scene list: %s", err)
 
         # Audio inputs
@@ -500,7 +631,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._stream_skipped_frames = status.output_skipped_frames or 0
             self._stream_total_frames = status.output_total_frames or 0
         except Exception as err:
-            _LOGGER.debug("Could not refresh stream stats: %s", err)
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing stream stats", err)
+            else:
+                _LOGGER.debug("Could not refresh stream stats: %s", err)
 
     async def _refresh_system_stats(self) -> None:
         """Refresh system statistics from OBS GetStats."""
@@ -521,7 +655,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._avg_frame_render_time = stats.average_frame_render_time or 0.0
             self._render_missed_frames = stats.render_missed_frames or 0
         except Exception as err:
-            _LOGGER.debug("Could not refresh system stats: %s", err)
+            if self._is_connection_error(err):
+                await self._handle_connection_loss("refreshing system stats", err)
+            else:
+                _LOGGER.debug("Could not refresh system stats: %s", err)
 
     # === Event Callbacks ===
     # obsws-python Callback.trigger() calls functions named on_{snake_case(event)}.
@@ -648,59 +785,68 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     # === Control Methods ===
 
     async def set_scene(self, scene_name: str) -> None:
-        await self.hass.async_add_executor_job(
-            self._client.set_current_program_scene, scene_name
+        await self._async_control_call(
+            "set_scene", lambda: self._client.set_current_program_scene(scene_name)
         )
 
     async def start_streaming(self) -> None:
-        await self.hass.async_add_executor_job(self._client.start_stream)
+        await self._async_control_call("start_streaming", lambda: self._client.start_stream())
 
     async def stop_streaming(self) -> None:
-        await self.hass.async_add_executor_job(self._client.stop_stream)
+        await self._async_control_call("stop_streaming", lambda: self._client.stop_stream())
 
     async def start_recording(self) -> None:
-        await self.hass.async_add_executor_job(self._client.start_record)
+        await self._async_control_call("start_recording", lambda: self._client.start_record())
 
     async def stop_recording(self) -> None:
-        await self.hass.async_add_executor_job(self._client.stop_record)
+        await self._async_control_call("stop_recording", lambda: self._client.stop_record())
 
     async def toggle_mute(self, source: str) -> None:
-        await self.hass.async_add_executor_job(
-            self._client.toggle_input_mute, source
+        await self._async_control_call(
+            "toggle_mute", lambda: self._client.toggle_input_mute(source)
         )
 
     async def set_mute(self, source: str, muted: bool) -> None:
-        await self.hass.async_add_executor_job(
-            self._client.set_input_mute, source, muted
+        await self._async_control_call(
+            "set_mute", lambda: self._client.set_input_mute(source, muted)
         )
 
     async def start_replay_buffer(self) -> None:
-        await self.hass.async_add_executor_job(self._client.start_replay_buffer)
+        await self._async_control_call(
+            "start_replay_buffer", lambda: self._client.start_replay_buffer()
+        )
 
     async def stop_replay_buffer(self) -> None:
-        await self.hass.async_add_executor_job(self._client.stop_replay_buffer)
+        await self._async_control_call(
+            "stop_replay_buffer", lambda: self._client.stop_replay_buffer()
+        )
 
     async def start_virtualcam(self) -> None:
-        await self.hass.async_add_executor_job(self._client.start_virtual_cam)
+        await self._async_control_call(
+            "start_virtualcam", lambda: self._client.start_virtual_cam()
+        )
 
     async def stop_virtualcam(self) -> None:
-        await self.hass.async_add_executor_job(self._client.stop_virtual_cam)
+        await self._async_control_call(
+            "stop_virtualcam", lambda: self._client.stop_virtual_cam()
+        )
 
     async def get_input_volume(self, source: str) -> dict:
-        return await self.hass.async_add_executor_job(
-            self._client.get_input_volume, source
+        return await self._async_control_call(
+            "get_input_volume", lambda: self._client.get_input_volume(source)
         )
 
     async def set_input_volume(self, source: str, volume_db: float) -> None:
-        await self.hass.async_add_executor_job(
-            self._client.set_input_volume, source, None, volume_db
+        await self._async_control_call(
+            "set_input_volume",
+            lambda: self._client.set_input_volume(source, None, volume_db),
         )
 
     async def set_scene_item_enabled(self, scene_name: str, source_name: str, enabled: bool) -> None:
         """Set visibility of a source within a scene."""
         # Find the scene item id for the source in the scene
-        items = await self.hass.async_add_executor_job(
-            self._client.get_scene_item_list, scene_name
+        items = await self._async_control_call(
+            "get_scene_item_list", lambda: self._client.get_scene_item_list(scene_name)
         )
         item_id = None
         for item in (items.scene_items if items else []):
@@ -708,8 +854,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                 item_id = item.get("sceneItemId")
                 break
         if item_id is not None:
-            await self.hass.async_add_executor_job(
-                self._client.set_scene_item_enabled, scene_name, item_id, enabled
+            await self._async_control_call(
+                "set_scene_item_enabled",
+                lambda: self._client.set_scene_item_enabled(scene_name, item_id, enabled),
             )
             # Update local state
             if scene_name in self._scene_items:
