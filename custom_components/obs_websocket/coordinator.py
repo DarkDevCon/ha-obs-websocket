@@ -276,6 +276,24 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     def _is_connection_error(self, err: Exception) -> bool:
         """Return True when an exception indicates a broken OBS connection."""
+        # obsws-python 1.8.0+ wraps Connection-Errors in OBSSDKError /
+        # OBSSDKRequestError / OBSSDKTimeoutError — they inherit from
+        # Exception (NOT OSError), so they fall through isinstance() checks
+        # below. Match them defensively.
+        try:
+            from obsws_python.error import (  # type: ignore
+                OBSSDKError,
+                OBSSDKRequestError,
+                OBSSDKTimeoutError,
+            )
+
+            if isinstance(
+                err, (OBSSDKError, OBSSDKRequestError, OBSSDKTimeoutError)
+            ):
+                return True
+        except ImportError:
+            pass
+
         if isinstance(
             err,
             (
@@ -301,6 +319,10 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                 "connection is already closed",
                 "not connected",
                 "failed to connect",
+                "request failed",
+                "stream is closed",
+                "websocket is closed",
+                "already closed",
             )
         )
 
@@ -364,7 +386,13 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._reconnect_task = None
 
     async def _async_control_call(self, action: str, func, *args):
-        """Execute an OBS control call with friendly HA errors."""
+        """Execute an OBS control call with friendly HA errors.
+
+        If a connection error occurs (BrokenPipeError, OBSSDKRequestError, …)
+        we cancel any background reconnect, reconnect inline and retry the
+        call once. This way the first click after an OBS-side disconnect goes
+        through instead of having to click again.
+        """
         if not self._client:
             self._schedule_reconnect()
             raise HomeAssistantError(
@@ -374,12 +402,52 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         try:
             return await self.hass.async_add_executor_job(func, *args)
         except Exception as err:
-            if self._is_connection_error(err):
-                await self._handle_connection_loss(action, err)
+            if not self._is_connection_error(err):
                 raise HomeAssistantError(
-                    f"OBS Studio at {self._host}:{self._port} is disconnected. Reconnect was scheduled."
+                    f"OBS action '{action}' failed: {err}"
                 ) from err
-            raise HomeAssistantError(f"OBS action '{action}' failed: {err}") from err
+
+            # Connection error — try inline reconnect + retry once
+            await self._handle_connection_loss(action, err)
+
+            # Cancel any background reconnect loop to avoid racing
+            if self._reconnect_task and not self._reconnect_task.done():
+                self._reconnect_task.cancel()
+                try:
+                    await self._reconnect_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._reconnect_task = None
+
+            _LOGGER.info(
+                "Inline reconnect to OBS %s:%s after failed '%s'",
+                self._host,
+                self._port,
+                action,
+            )
+            try:
+                await self.async_connect(skip_initial_refresh=True)
+                await self._refresh_state()
+            except Exception as reconnect_err:
+                self._schedule_reconnect()
+                raise HomeAssistantError(
+                    f"OBS Studio at {self._host}:{self._port} is disconnected. "
+                    f"Inline reconnect failed: {reconnect_err}"
+                ) from err
+
+            # Retry the original action on the freshly reconnected client
+            try:
+                return await self.hass.async_add_executor_job(func, *args)
+            except Exception as retry_err:
+                if self._is_connection_error(retry_err):
+                    await self._handle_connection_loss(f"{action} (retry)", retry_err)
+                    self._schedule_reconnect()
+                    raise HomeAssistantError(
+                        f"OBS Studio at {self._host}:{self._port} is disconnected after retry."
+                    ) from retry_err
+                raise HomeAssistantError(
+                    f"OBS action '{action}' failed on retry: {retry_err}"
+                ) from retry_err
 
     async def async_disconnect(self) -> None:
         """Disconnect from OBS WebSocket."""
