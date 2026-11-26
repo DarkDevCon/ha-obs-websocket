@@ -6,6 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_PASSWORD, EVENT_OBS_EVENT
@@ -43,8 +44,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_connect(skip_initial_refresh=True)
     except Exception as err:
-        _LOGGER.error("Failed to connect to OBS WebSocket: %s", err)
-        return False
+        # Clean up any partially-connected clients, then let HA retry with
+        # backoff instead of permanently marking the entry as failed.
+        await coordinator.async_disconnect()
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        raise ConfigEntryNotReady(
+            f"OBS WebSocket at {entry.data[CONF_HOST]}:"
+            f"{entry.data.get(CONF_PORT, 4455)} not reachable: {err}"
+        ) from err
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

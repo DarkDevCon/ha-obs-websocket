@@ -81,7 +81,7 @@ class OBSScenePreview(OBSEntity, ImageEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle coordinator update — trigger image refresh on scene change."""
         # Schedule async image fetch on the event loop
-        self.hass.async_create_task(self._async_refresh_image())
+        self.hass.create_task(self._async_refresh_image(), name="obs_image_refresh")
         # Call parent to update state
         self.async_write_ha_state()
 

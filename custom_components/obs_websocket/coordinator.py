@@ -764,18 +764,18 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     def on_scene_list_changed(self, data) -> None:
         """Handle SceneListChanged event — trigger async refresh."""
-        self.hass.loop.call_soon_threadsafe(
-            self.hass.async_create_task, self._refresh_scenes()
-        )
-        self.hass.loop.call_soon_threadsafe(
-            self.hass.async_create_task, self._refresh_scene_items()
+        # hass.create_task is thread-safe, safe to call from the obsws
+        # event callback thread directly.
+        self.hass.create_task(self._refresh_scenes(), name="obs_refresh_scenes")
+        self.hass.create_task(
+            self._refresh_scene_items(), name="obs_refresh_scene_items"
         )
         self._fire_event("SceneListChanged", data)
 
     def on_scene_item_enable_state_changed(self, data) -> None:
         """Handle SceneItemEnableStateChanged event — trigger async refresh."""
-        self.hass.loop.call_soon_threadsafe(
-            self.hass.async_create_task, self._refresh_scene_items()
+        self.hass.create_task(
+            self._refresh_scene_items(), name="obs_refresh_scene_items"
         )
         self._fire_event("SceneItemEnableStateChanged", data)
 
@@ -802,8 +802,8 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
 
     def on_input_created(self, data) -> None:
         """Handle InputCreated event — refresh audio inputs."""
-        self.hass.loop.call_soon_threadsafe(
-            self.hass.async_create_task, self._refresh_audio_inputs()
+        self.hass.create_task(
+            self._refresh_audio_inputs(), name="obs_refresh_audio_inputs"
         )
         self._fire_event("InputCreated", data)
 
