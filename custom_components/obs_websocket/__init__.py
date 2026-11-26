@@ -33,6 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = OBSWebSocketCoordinator(
         hass,
+        entry=entry,
         host=entry.data[CONF_HOST],
         port=entry.data.get(CONF_PORT, 4455),
         password=entry.data.get(CONF_PASSWORD),

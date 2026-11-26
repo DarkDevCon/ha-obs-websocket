@@ -7,6 +7,7 @@ import logging
 import socket
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -52,6 +53,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         hass: HomeAssistant,
+        entry: ConfigEntry,
         host: str,
         port: int,
         password: str | None,
@@ -60,6 +62,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=None,  # Event-driven, not polling
         )
