@@ -7,6 +7,11 @@ CONF_PASSWORD = "password"
 
 DEFAULT_PORT = 4455
 
+# Reconnect only after this many consecutive failed stats polls.
+# A single OBS timeout (e.g. encoder stall) must not tear down a healthy
+# connection — obsws-python only recovers on the next successful poll.
+STATS_FAIL_THRESHOLD = 2
+
 # Event types
 EVENT_OBS_EVENT = "obs_websocket_event"
 

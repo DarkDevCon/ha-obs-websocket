@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.const import UnitOfDataRate, UnitOfInformation
 
-from .const import DOMAIN, EVENT_OBS_EVENT
+from .const import DOMAIN, EVENT_OBS_EVENT, STATS_FAIL_THRESHOLD
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._scene_items: dict[str, dict[str, bool]] = {}
 
         # Stream stats
+        self._stats_fail_count: int = 0
         self._stream_bytes: int = 0
         self._stream_duration: int = 0  # milliseconds
         self._stream_skipped_frames: int = 0
@@ -669,17 +670,39 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._notify_update()
 
     async def _stats_loop(self) -> None:
-        """Poll OBS for stream and system stats every STATS_POLL_INTERVAL seconds."""
+        """Poll OBS for stream and system stats every STATS_POLL_INTERVAL seconds.
+
+        Reconnect only after STATS_FAIL_THRESHOLD consecutive poll failures —
+        a single OBS timeout (encoder/GPU stall, short freeze) must not tear
+        down a connection that recovers on the next poll.
+        """
         while True:
             try:
                 await asyncio.sleep(STATS_POLL_INTERVAL)
                 await self._refresh_stream_stats()
                 await self._refresh_system_stats()
                 self._notify_update()
+                self._stats_fail_count = 0
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                _LOGGER.debug("Stats poll error: %s", err)
+                if not self._is_connection_error(err):
+                    _LOGGER.debug("Stats poll error: %s", err)
+                    continue
+                self._stats_fail_count += 1
+                if self._stats_fail_count < STATS_FAIL_THRESHOLD:
+                    _LOGGER.warning(
+                        "OBS stats poll to %s:%s failed with a connection error "
+                        "(%s of %s): %s — polling again before reconnecting",
+                        self._host,
+                        self._port,
+                        self._stats_fail_count,
+                        STATS_FAIL_THRESHOLD,
+                        err,
+                    )
+                    continue
+                self._stats_fail_count = 0
+                await self._handle_connection_loss("refreshing stats", err)
 
     async def _refresh_stream_stats(self) -> None:
         """Refresh stream statistics from OBS GetStreamStatus."""
@@ -700,9 +723,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._stream_total_frames = status.output_total_frames or 0
         except Exception as err:
             if self._is_connection_error(err):
-                await self._handle_connection_loss("refreshing stream stats", err)
-            else:
-                _LOGGER.debug("Could not refresh stream stats: %s", err)
+                # Let _stats_loop decide when to actually reconnect
+                raise
+            _LOGGER.debug("Could not refresh stream stats: %s", err)
 
     async def _refresh_system_stats(self) -> None:
         """Refresh system statistics from OBS GetStats."""
@@ -724,9 +747,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             self._render_missed_frames = stats.render_missed_frames or 0
         except Exception as err:
             if self._is_connection_error(err):
-                await self._handle_connection_loss("refreshing system stats", err)
-            else:
-                _LOGGER.debug("Could not refresh system stats: %s", err)
+                # Let _stats_loop decide when to actually reconnect
+                raise
+            _LOGGER.debug("Could not refresh system stats: %s", err)
 
     # === Event Callbacks ===
     # obsws-python Callback.trigger() calls functions named on_{snake_case(event)}.
