@@ -8,6 +8,7 @@ frontend uses (GET /api/image_proxy/<entity_id>?token=...).
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -82,6 +83,71 @@ async def test_proxy_serves_jpeg_bytes(hass, enable_custom_integrations, hass_cl
     # state == isoformat of image_last_updated (HA ImageEntity contract)
     state = hass.states.get(entity_id)
     assert state.state == entity._attr_image_last_updated.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_truncated_large_payload_still_served(hass, enable_custom_integrations):
+    """The live failure shape: OBS truncates a large payload.
+
+    The salvage decoder must recover a JPEG-signature image from the
+    truncated 640px payload without needing a retry.
+    """
+    import base64 as b64mod
+
+    install_fake_module()
+    entry = MockConfigEntry(domain=DOMAIN, version=1, data=dict(ENTRY_DATA))
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    fake_client = coordinator._client._wrapped
+
+    full = b64mod.b64encode(fake_client.screenshot_bytes).decode().rstrip("=")
+    truncated = full[: len(full) - ((len(full) - 1) % 4)]  # data % 4 == 1
+    assert len(truncated) % 4 == 1
+
+    fake_client.get_source_screenshot = lambda *a, **k: SimpleNamespace(
+        image_data=truncated
+    )
+    coordinator._notify_update()
+    await hass.async_block_till_done()
+
+    entity = _image_entity(hass)
+    assert entity is not None
+    assert entity._cached_bytes is not None
+    assert entity._cached_bytes[:2] == b"\xff\xd8", entity._cached_bytes[:16]
+
+
+@pytest.mark.asyncio
+async def test_preview_retries_smaller_size(hass, enable_custom_integrations):
+    """Unusable large payloads must trigger the smaller-size retry ladder."""
+    install_fake_module()
+    entry = MockConfigEntry(domain=DOMAIN, version=1, data=dict(ENTRY_DATA))
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    fake_client = coordinator._client._wrapped
+    fake_client.fail_large_screenshots = True
+
+    coordinator._notify_update()
+    await hass.async_block_till_done()
+
+    entity = _image_entity(hass)
+    assert entity is not None
+    assert entity._cached_bytes == JPEG
+
+    # Clear the 10s throttle so the next update actually fetches
+    entity._last_fetch = None
+    coordinator._notify_update()
+    await hass.async_block_till_done()
+
+    widths = [req[0] for req in fake_client.screenshot_requests]
+    assert entity._cached_bytes == JPEG, "retry ladder did not produce a JPEG"
+    assert 640 in widths, f"expected a 640px attempt: {widths}"
+    assert widths[-1] == 480, f"expected ladder to stop at the successful 480px: {widths}"
 
 
 @pytest.mark.asyncio

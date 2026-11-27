@@ -27,6 +27,18 @@ class FakeReqClient:
     def __init__(self, *args, **kwargs):
         self.screenshot_bytes = make_jpeg()
         self.disconnect_count = 0
+        # (width, height) of successful get_source_screenshot calls
+        self.screenshot_requests: list[tuple[int, ...]] = []
+        # When True, screenshots of 640px width come back as unusable
+        # garbage — simulating OBS truncated/corrupt large payloads —
+        # while the 480px retry succeeds.
+        self.fail_large_screenshots = False
+
+    def _screenshot(self, width, height, quality):
+        self.screenshot_requests.append((width, height, quality))
+        if self.fail_large_screenshots and width >= 640:
+            return "zzz!"  # decodes to nothing usable
+        return base64.b64encode(self.screenshot_bytes).decode()
 
     # --- state ---
     def get_current_program_scene(self):
@@ -100,7 +112,7 @@ class FakeReqClient:
         )
 
     def get_source_screenshot(self, name, img_format, width, height, quality):
-        return SimpleNamespace(image_data=base64.b64encode(self.screenshot_bytes).decode())
+        return SimpleNamespace(image_data=self._screenshot(width, height, quality))
 
     def disconnect(self):
         self.disconnect_count += 1

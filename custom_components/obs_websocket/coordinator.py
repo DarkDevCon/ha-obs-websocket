@@ -75,19 +75,41 @@ class _LockedReqClient:
         return call
 
 
-def _b64decode_safe(b64: str) -> bytes:
-    """Base64 decode with padding repair.
+def _b64decode_safe(b64: str) -> bytes | None:
+    """Base64 decode with padding repair and truncation salvage.
 
-    OBS sometimes sends base64 strings without correct padding
-    (missing '=' characters), causing binascii.Error: Incorrect padding.
+    Handles the real-world OBS screenshot quirks:
+    - padded or unpadded base64 (repair the padding),
+    - whitespace/newlines embedded by some OBS builds (stripped),
+    - data-URL style payloads ("data:image/jpeg;base64,...") (prefix removed),
+    - truncated payloads: a data length of 1 (mod 4) cannot exist in complete
+      base64 — the response lost its final chars. Salvage drops the orphan
+      tail (losing at most the last ~2 image bytes), which JPEG tolerates.
+    Returns None if the payload cannot decode to anything usable.
     """
-    # Strip whitespace/newlines that some OBS versions add
-    b64 = b64.strip().replace("\n", "").replace("\r", "")
-    # Fix padding: base64 strings must be multiple of 4
-    missing = len(b64) % 4
-    if missing:
-        b64 += "=" * (4 - missing)
-    return base64.b64decode(b64)
+    b64 = b64.strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    if not b64:
+        return None
+    if "," in b64 and "base64" in b64:
+        b64 = b64.split(",", 1)[1]
+    remaining = len(b64) % 4
+    if remaining == 1:
+        # Impossible in complete base64 → truncated tail; drop the orphan char
+        # and continue (last quad decodes 2 of its 3 bytes).
+        b64 = b64[:-1]
+        remaining = 0
+    if remaining:
+        b64 += "=" * (4 - remaining)
+    try:
+        return base64.b64decode(b64)
+    except (ValueError, TypeError) as err:
+        _LOGGER.debug("b64 decode failed (len=%d chars): %s", len(b64), err)
+        return None
+
+
+def _looks_like_jpeg(data: bytes | None) -> bool:
+    """Cheap JPEG signature check (SOI marker)."""
+    return bool(data) and data[:2] == b"\xff\xd8"
 
 # Suppress obsws_python's verbose exception logging for 604 (not available) errors.
 # The library logs every OBSSDKRequestError at ERROR level with traceback before
@@ -1019,8 +1041,23 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         else:
             _LOGGER.warning("Source %s not found in scene %s", source_name, scene_name)
 
+    # Screenshot attempts, largest first. If OBS truncates the base64 payload
+    # of a big screenshot (seen in the wild: ~94 KB JPEG cut mid-payload),
+    # smaller formats are significantly less likely to be cut. On truncation
+    # the salvage decoder may still return a partial (tail-less) image, which
+    # is accepted — retries only happen when nothing usable came back.
+    _PREVIEW_SIZES: tuple[tuple[int, int, int], ...] = (
+        (640, 360, 80),
+        (480, 270, 60),
+        (320, 180, 40),
+    )
+
     async def get_scene_preview(self, scene_name: str | None = None) -> bytes | None:
-        """Get a preview screenshot of the current or specified scene."""
+        """Get a preview screenshot of the current or specified scene.
+
+        Tries progressively smaller JPEG sizes; returns the first payload that
+        decodes to a valid JPEG.
+        """
         if not self._client:
             _LOGGER.debug("get_scene_preview: no client")
             return None
@@ -1030,29 +1067,57 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             if scene_name is None:
                 _LOGGER.debug("get_scene_preview: no current scene")
                 return None
-            _LOGGER.debug("get_scene_preview: requesting screenshot for '%s'", scene_name)
-            # OBS WebSocket v5: GetSourceScreenshot
-            # Scenes are sources in OBS, so GetSourceScreenshot works for scenes too.
-            # Use jpg with reasonable size for HA preview (640px wide)
-            # OBS requires width and height >= 8, 0 might not work
-            screenshot = await self.hass.async_add_executor_job(
-                self._client.get_source_screenshot,
-                scene_name,
-                "jpg",
-                640,   # width
-                360,   # height (16:9 aspect, OBS scales to inner)
-                80,    # quality: 80% jpg
-            )
-            # as_dataclass converts top-level keys to snake_case
-            # The response has 'imageData' -> 'image_data'
-            if hasattr(screenshot, "image_data"):
-                b64_data = screenshot.image_data
-                _LOGGER.debug("get_scene_preview: got image (%d chars)", len(b64_data))
-                return _b64decode_safe(b64_data)
-            elif hasattr(screenshot, "img"):
-                return _b64decode_safe(screenshot.img)
-            else:
-                _LOGGER.warning("get_scene_preview: unexpected response: %s", type(screenshot))
+
+            for attempt, (width, height, quality) in enumerate(self._PREVIEW_SIZES):
+                screenshot = await self.hass.async_add_executor_job(
+                    self._client.get_source_screenshot,
+                    scene_name,
+                    "jpg",
+                    width,
+                    height,
+                    quality,
+                )
+                # as_dataclass converts top-level keys to snake_case:
+                # 'imageData' -> 'image_data'
+                b64_data: str | None = None
+                if hasattr(screenshot, "image_data"):
+                    b64_data = screenshot.image_data
+                elif hasattr(screenshot, "img"):
+                    b64_data = screenshot.img
+                elif screenshot is not None:
+                    _LOGGER.warning(
+                        "get_scene_preview: unexpected response: %s", type(screenshot)
+                    )
+                    continue
+
+                if not b64_data:
+                    continue
+
+                image = _b64decode_safe(b64_data)
+                if image and _looks_like_jpeg(image):
+                    if attempt:
+                        _LOGGER.debug(
+                            "get_scene_preview: '%s' ok on retry %d (%dx%d q%d)",
+                            scene_name, attempt, width, height, quality,
+                        )
+                    return image
+                has_next = attempt + 1 < len(self._PREVIEW_SIZES)
+                retry_info = (
+                    " — retrying smaller "
+                    + "%dx%d q%d" % self._PREVIEW_SIZES[attempt + 1]
+                    if has_next
+                    else " — all sizes exhausted"
+                )
+                _LOGGER.warning(
+                    "Error getting scene preview for '%s': payload of %d chars did "
+                    "not decode to a JPEG (len%%4=%d)%s",
+                    scene_name,
+                    len(b64_data),
+                    len(b64_data.replace("\n", "").replace("\r", "").replace(" ", "")) % 4,
+                    retry_info,
+                )
+            return None
         except Exception as err:
             _LOGGER.warning("Error getting scene preview for '%s': %s", scene_name, err)
+            return None
         return None
