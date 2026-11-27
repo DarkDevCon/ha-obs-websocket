@@ -18,7 +18,7 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
     Platform.SELECT,
     Platform.NUMBER,
-    # Platform.IMAGE,  # Disabled — OBS base64 screenshot padding issues
+    Platform.IMAGE,
 ]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
