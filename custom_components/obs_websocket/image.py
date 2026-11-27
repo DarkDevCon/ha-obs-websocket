@@ -24,6 +24,12 @@ _LOGGER = logging.getLogger(__name__)
 # How often to refresh the screenshot (seconds)
 PREVIEW_INTERVAL = 5
 
+# Jitter slack for the throttle: the async_track_time_interval fires on
+# loop time while fetch timestamps were taken on another clock — measuring
+# 4.99s instead of 5.0s must not skip the pull (a skip doubles the effective
+# interval to 10s because only the stats-loop update then still triggers).
+THROTTLE_SLACK = 0.25
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -68,10 +74,19 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         self._client = get_async_client(hass, verify_ssl=False)
         self._attr_content_type = "image/jpeg"
         self._attr_image_last_updated: datetime | None = None
-        self._last_fetch: datetime | None = None
+        # Monotonic event-loop time (hass.loop.time), not wall clock —
+        # immune to NTP steps and comparable to the timer's scheduling base.
+        self._last_fetch: float | None = None
         self._cached_bytes: bytes | None = None
         self._fetch_lock = asyncio.Lock()
         self._timer_unsub: Callable[[], None] | None = None
+
+    def _refresh_throttled(self) -> bool:
+        """True when the last fetch is closer than PREVIEW_INTERVAL."""
+        if self._last_fetch is None:
+            return False
+        elapsed = self.hass.loop.time() - self._last_fetch
+        return elapsed < PREVIEW_INTERVAL - THROTTLE_SLACK
 
     async def async_added_to_hass(self) -> None:
         """Start the periodic screenshot timer once attached to hass."""
@@ -116,14 +131,13 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         if not scene:
             return
 
-        now = datetime.now()
-        if self._last_fetch and (now - self._last_fetch) < timedelta(seconds=PREVIEW_INTERVAL):
+        if self._refresh_throttled():
             return
 
         async with self._fetch_lock:
-            # Double-check after acquiring lock
-            now = datetime.now()
-            if self._last_fetch and (now - self._last_fetch) < timedelta(seconds=PREVIEW_INTERVAL):
+            # Double-check after acquiring lock (another task may have
+            # completed a fetch while we waited)
+            if self._refresh_throttled():
                 return
 
             _LOGGER.debug("Preview: requesting screenshot for scene '%s'", scene)
@@ -135,11 +149,16 @@ class OBSScenePreview(OBSEntity, ImageEntity):
                 if image_data:
                     self._cached_bytes = image_data
                     self._attr_image_last_updated = datetime.now()
-                    self._last_fetch = datetime.now()
+                    self._last_fetch = self.hass.loop.time()
                     self.async_write_ha_state()
-                    _LOGGER.debug("Preview: got %d bytes for scene '%s'", len(image_data), scene)
+                    _LOGGER.debug(
+                        "Preview: got %d bytes for scene '%s'", len(image_data), scene
+                    )
                 else:
-                    _LOGGER.warning("Preview: get_scene_preview returned None for scene '%s'", scene)
+                    _LOGGER.warning(
+                        "Preview: get_scene_preview returned None for scene '%s'",
+                        scene,
+                    )
             except asyncio.TimeoutError:
                 _LOGGER.warning("Preview: timed out getting screenshot for scene '%s'", scene)
             except Exception as err:

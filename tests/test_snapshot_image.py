@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from tests.fake_obsws import install_fake_module, make_jpeg
 
 DOMAIN = "obs_websocket"
+PREVIEW_INTERVAL = 5  # mirror custom_components/obs_websocket/image.py
 
 ENTRY_DATA = {"host": "fake-obs", "port": 4455, "password": ""}
 JPEG = make_jpeg()
@@ -177,8 +178,9 @@ async def test_timer_pulls_every_5_seconds(hass, enable_custom_integrations):
     fake_client.screenshot_bytes = new_bytes
 
     # Advance HA time by one PREVIEW_INTERVAL (5s) — the entity's timer must
-    # fire and pull a new screenshot, bypassing the throttle via a fresh fetch.
-    entity._last_fetch = None
+    # fire and pull a new screenshot. Simulate a full-interval-old fetch so
+    # the throttle (loop-time based) lets it through.
+    entity._last_fetch = entity.hass.loop.time() - PREVIEW_INTERVAL - 0.5
     async_fire_time_changed(
         hass, dt_util.utcnow() + timedelta(seconds=5, milliseconds=50)
     )
@@ -192,6 +194,38 @@ async def test_timer_pulls_every_5_seconds(hass, enable_custom_integrations):
     # State reflects the new fetch
     state = hass.states.get(entity.entity_id)
     assert state.state == entity._attr_image_last_updated.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_throttle_boundary_survives_jitter(hass, enable_custom_integrations):
+    """A fetch measured at ~4.8s ago must pull again — the old wall-clock
+    throttle skipped it (< 5.0s strictly), which doubled the effective
+    interval to 10s when the 5s timer hit the boundary."""
+    install_fake_module()
+    entry = MockConfigEntry(domain=DOMAIN, version=1, data=dict(ENTRY_DATA))
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator._notify_update()
+    await hass.async_block_till_done()
+
+    entity = _image_entity(hass)
+    assert entity is not None
+    fake_client = coordinator._client._wrapped
+    requests_before = len(fake_client.screenshot_requests)
+
+    # Simulate a fetch 4.8s ago (inside the strict old throttle, inside the
+    # new slack): a triggered refresh must go through.
+    entity._last_fetch = entity.hass.loop.time() - (PREVIEW_INTERVAL - 0.2)
+    await entity._async_refresh_image()
+    assert len(fake_client.screenshot_requests) == requests_before + 1
+
+    # Just after a fresh fetch (elapsed ~0s): still throttled.
+    entity._last_fetch = entity.hass.loop.time() - 0.1
+    await entity._async_refresh_image()
+    assert len(fake_client.screenshot_requests) == requests_before + 1
 
 
 @pytest.mark.asyncio
