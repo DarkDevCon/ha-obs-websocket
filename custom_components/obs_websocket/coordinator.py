@@ -5,6 +5,7 @@ import asyncio
 import base64
 import logging
 import socket
+import threading
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -22,6 +23,56 @@ _LOGGER = logging.getLogger(__name__)
 # Polling interval for stream/system stats (OBS doesn't push these as events)
 STATS_POLL_INTERVAL = 10  # seconds
 RECONNECT_INTERVAL = 10  # seconds
+
+
+def _bool_stat(value: Any) -> bool:
+    """Normalize a stats flag that may arrive as bool or legacy 'true'/'false'."""
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def _stat(obj: Any, attr: str, default: Any = 0) -> Any:
+    """Read an attr from an obsws-python stats dataclass, or return default.
+
+    obsws-python builds these dataclasses dynamically from the raw response
+    keys, so which attributes exist depends on the OBS version. Missing
+    fields (e.g. renderMissedFrames on older OBS builds) must not abort the
+    whole stats refresh.
+    """
+    return getattr(obj, attr, default)
+
+
+class _LockedReqClient:
+    """Proxy over the obsws-python ReqClient that serializes all calls.
+
+    Every ReqClient request is issued on one shared WebSocket, and
+    obsws-python's req() discards any frame that is not its own response.
+    Two overlapping requests therefore consume each other's replies and
+    surface as 'Timeout while trying to send the request' — which the
+    coordinator's refresh paths (scene items, stats) and service calls all
+    are: concurrent tasks each offloaded to executor threads.
+
+    A thread-level lock suffices because every call runs on an executor
+    thread; no call site had to change. Holding the lock across the socket
+    read is safe: requests complete in bounded time (OBS socket timeout=10s).
+    """
+
+    def __init__(self, client: Any, lock: threading.Lock) -> None:
+        object.__setattr__(self, "_wrapped", client)
+        object.__setattr__(self, "_lock", lock)
+
+    def __getattr__(self, name: str):
+        target = getattr(object.__getattribute__(self, "_wrapped"), name)
+        if not callable(target):
+            return target
+        lock = object.__getattribute__(self, "_lock")
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            with lock:
+                return target(*args, **kwargs)
+
+        return call
 
 
 def _b64decode_safe(b64: str) -> bytes:
@@ -72,6 +123,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         self._entry_id = entry_id
         self._client = None
         self._event_client = None
+        self._client_lock: threading.Lock = threading.Lock()
         self._data: dict[str, Any] = {}
 
         # State
@@ -211,7 +263,7 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
         import obsws_python as obs
 
         # ReqClient and EventClient constructors do blocking I/O (WebSocket connect + auth)
-        self._client = await self.hass.async_add_executor_job(
+        raw_client = await self.hass.async_add_executor_job(
             lambda: obs.ReqClient(
                 host=self._host,
                 port=self._port,
@@ -219,6 +271,9 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
                 timeout=10,
             )
         )
+        # Serialize all requests: they share one WebSocket and overlapping
+        # calls would consume each other's responses (see _LockedReqClient).
+        self._client = _LockedReqClient(raw_client, self._client_lock)
 
         # Get initial state (unless deferred to after entity setup)
         if not skip_initial_refresh:
@@ -717,13 +772,15 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             if not status:
                 return
-            self._streaming = bool(status.output_active)
-            self._stream_bytes = status.output_bytes or 0
-            self._stream_duration = status.output_duration or 0
-            self._stream_congestion = status.output_congestion or 0.0
-            self._stream_reconnecting = bool(status.output_reconnecting)
-            self._stream_skipped_frames = status.output_skipped_frames or 0
-            self._stream_total_frames = status.output_total_frames or 0
+            self._streaming = _bool_stat(_stat(status, "output_active", False))
+            self._stream_bytes = _stat(status, "output_bytes") or 0
+            self._stream_duration = _stat(status, "output_duration") or 0
+            self._stream_congestion = _stat(status, "output_congestion") or 0.0
+            self._stream_reconnecting = _bool_stat(
+                _stat(status, "output_reconnecting", False)
+            )
+            self._stream_skipped_frames = _stat(status, "output_skipped_frames") or 0
+            self._stream_total_frames = _stat(status, "output_total_frames") or 0
         except Exception as err:
             if self._is_connection_error(err):
                 # Let _stats_loop decide when to actually reconnect
@@ -740,14 +797,17 @@ class OBSWebSocketCoordinator(DataUpdateCoordinator):
             )
             if not stats:
                 return
-            self._cpu_usage = stats.cpu_usage or 0.0
-            self._memory_usage = stats.memory_usage or 0.0
-            self._active_fps = stats.active_fps or 0.0
-            self._render_skipped_frames = stats.render_skipped_frames or 0
-            self._render_total_frames = stats.render_total_frames or 0
-            self._available_disk_space = stats.available_disk_space or 0.0
-            self._avg_frame_render_time = stats.average_frame_render_time or 0.0
-            self._render_missed_frames = stats.render_missed_frames or 0
+            self._cpu_usage = _stat(stats, "cpu_usage") or 0.0
+            self._memory_usage = _stat(stats, "memory_usage") or 0.0
+            self._active_fps = _stat(stats, "active_fps") or 0.0
+            self._render_skipped_frames = _stat(stats, "render_skipped_frames") or 0
+            self._render_total_frames = _stat(stats, "render_total_frames") or 0
+            self._available_disk_space = _stat(stats, "available_disk_space") or 0.0
+            self._avg_frame_render_time = (
+                _stat(stats, "average_frame_render_time") or 0.0
+            )
+            # renderMissedFrames is not returned by all OBS versions
+            self._render_missed_frames = _stat(stats, "render_missed_frames") or 0
         except Exception as err:
             if self._is_connection_error(err):
                 # Let _stats_loop decide when to actually reconnect
