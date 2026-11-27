@@ -13,7 +13,7 @@ import sys
 # Make repo root importable (tests/ package) regardless of invocation cwd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import httpx2
+import httpx2  # noqa: E402  (must precede PHACC entry-point imports)
 
 httpx2.alias_httpx()
 
@@ -34,7 +34,7 @@ def _compat_shims() -> None:
 
 _compat_shims()
 
-import pytest
+import pytest  # noqa: E402  (runs after deliberate shims)
 
 
 if __name__ == "__main__":

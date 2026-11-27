@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from random import SystemRandom
 
@@ -11,6 +12,7 @@ from homeassistant.components.image import ImageEntity, ImageEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.httpx_client import get_async_client
 
 from .const import DOMAIN
@@ -20,7 +22,7 @@ from .entity import OBSEntity
 _LOGGER = logging.getLogger(__name__)
 
 # How often to refresh the screenshot (seconds)
-PREVIEW_INTERVAL = 10
+PREVIEW_INTERVAL = 5
 
 
 async def async_setup_entry(
@@ -69,6 +71,29 @@ class OBSScenePreview(OBSEntity, ImageEntity):
         self._last_fetch: datetime | None = None
         self._cached_bytes: bytes | None = None
         self._fetch_lock = asyncio.Lock()
+        self._timer_unsub: Callable[[], None] | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Start the periodic screenshot timer once attached to hass."""
+        await super().async_added_to_hass()
+        if self._timer_unsub is None:
+            self._timer_unsub = async_track_time_interval(
+                self.hass,
+                self._on_refresh_timer,
+                timedelta(seconds=PREVIEW_INTERVAL),
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop the timer on entity removal."""
+        await super().async_will_remove_from_hass()
+        if self._timer_unsub:
+            self._timer_unsub()
+            self._timer_unsub = None
+
+    @callback
+    def _on_refresh_timer(self, _now: datetime) -> None:
+        """Periodic refresh — fire-and-forget so slow fetches never delay it."""
+        self.hass.create_task(self._async_refresh_image(), name="obs_image_refresh")
 
     @property
     def available(self) -> bool:

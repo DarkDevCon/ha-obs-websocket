@@ -7,14 +7,14 @@ frontend uses (GET /api/image_proxy/<entity_id>?token=...).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from tests.fake_obsws import FakeReqClient, install_fake_module, make_jpeg
+from tests.fake_obsws import install_fake_module, make_jpeg
 
 DOMAIN = "obs_websocket"
 
@@ -148,6 +148,50 @@ async def test_preview_retries_smaller_size(hass, enable_custom_integrations):
     assert entity._cached_bytes == JPEG, "retry ladder did not produce a JPEG"
     assert 640 in widths, f"expected a 640px attempt: {widths}"
     assert widths[-1] == 480, f"expected ladder to stop at the successful 480px: {widths}"
+
+
+@pytest.mark.asyncio
+async def test_timer_pulls_every_5_seconds(hass, enable_custom_integrations):
+    """The periodic timer must pull a fresh screenshot every PREVIEW_INTERVAL."""
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    install_fake_module()
+    entry = MockConfigEntry(domain=DOMAIN, version=1, data=dict(ENTRY_DATA))
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator._notify_update()
+    await hass.async_block_till_done()
+
+    entity = _image_entity(hass)
+    assert entity is not None
+    assert entity._cached_bytes == JPEG
+    fake_client = coordinator._client._wrapped
+    requests_before = len(fake_client.screenshot_requests)
+
+    # OBS renders a different image now
+    new_bytes = make_jpeg(color=(255, 0, 255))
+    fake_client.screenshot_bytes = new_bytes
+
+    # Advance HA time by one PREVIEW_INTERVAL (5s) — the entity's timer must
+    # fire and pull a new screenshot, bypassing the throttle via a fresh fetch.
+    entity._last_fetch = None
+    async_fire_time_changed(
+        hass, dt_util.utcnow() + timedelta(seconds=5, milliseconds=50)
+    )
+    await hass.async_block_till_done()
+
+    assert len(fake_client.screenshot_requests) == requests_before + 1, (
+        fake_client.screenshot_requests
+    )
+    assert entity._cached_bytes == new_bytes
+
+    # State reflects the new fetch
+    state = hass.states.get(entity.entity_id)
+    assert state.state == entity._attr_image_last_updated.isoformat()
 
 
 @pytest.mark.asyncio
